@@ -28,9 +28,40 @@
   };
 
   async function load(url) {
-    const response = await fetch(url || 'dictionary.tsv');
-    if (!response.ok) throw new Error('词典加载失败 ' + response.status);
-    const text = await response.text();
+    const target = url || 'dictionary.tsv';
+
+    // 先看缓存（上次加载时存进去的），没有再走网络。
+    // 词典文件大，交给 Cache API 存，不让 Service Worker 在请求链路上复制一遍
+    let text = null;
+
+    if ('caches' in window) {
+      try {
+        const hit = await caches.match(target);
+        if (hit) text = await hit.text();
+      } catch (e) {
+        /* 读缓存失败就当没有 */
+      }
+    }
+
+    if (text === null) {
+      const response = await fetch(target);
+      if (!response.ok) throw new Error('词典加载失败 ' + response.status);
+      text = await response.text();
+
+      if ('caches' in window) {
+        caches
+          .open('vocab-lens-dict')
+          .then((cache) =>
+            cache.put(
+              target,
+              new Response(text, {
+                headers: { 'Content-Type': 'text/tab-separated-values' }
+              })
+            )
+          )
+          .catch(function () {});
+      }
+    }
 
     let section = '';
     const lines = text.split('\n');

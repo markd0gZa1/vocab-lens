@@ -1,4 +1,6 @@
-const CACHE = 'vocab-lens-v3';
+const CACHE = 'vocab-lens-v4';
+// 词典单独放一个缓存，不随版本更新被清掉
+const DICT_CACHE = 'vocab-lens-dict';
 
 const PRECACHE = [
   './index.html',
@@ -24,7 +26,13 @@ self.addEventListener('activate', (event) => {
   event.waitUntil(
     caches
       .keys()
-      .then((keys) => Promise.all(keys.filter((k) => k !== CACHE).map((k) => caches.delete(k))))
+      .then((keys) =>
+        Promise.all(
+          keys
+            .filter((k) => k !== CACHE && k !== DICT_CACHE)
+            .map((k) => caches.delete(k))
+        )
+      )
       .then(() => self.clients.claim())
   );
 });
@@ -35,6 +43,9 @@ self.addEventListener('fetch', (event) => {
 
   const url = new URL(request.url);
   if (url.origin !== location.origin) return;
+
+  // 词典太大，交给页面自己用 Cache API 管，别在请求链路上复制一遍
+  if (url.pathname.endsWith('dictionary.tsv')) return;
 
   event.respondWith(
     caches.match(request).then((hit) => {
