@@ -1,4 +1,4 @@
-const CACHE = 'vocab-lens-v7';
+const CACHE = 'vocab-lens-v8';
 // 词典单独放一个缓存，不随版本更新被清掉
 const DICT_CACHE = 'vocab-lens-dict';
 

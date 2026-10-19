@@ -1,6 +1,6 @@
 {
-  "name": "单词镜头",
-  "short_name": "单词镜头",
+  "name": "单词视界",
+  "short_name": "单词视界",
   "description": "拍一页书，把英文单词按顺序列出来，点一下就念给你听。",
   "start_url": "./index.html",
   "scope": "./",

@@ -825,7 +825,7 @@
 
     return (
       '<header class="head">' +
-        '<h1>单词镜头</h1>' +
+        '<h1>单词视界</h1>' +
         '<p>拍一页，点一下就念给你听</p>' +
         '<button class="about-btn" data-about>ⓘ</button>' +
       '</header>' +
@@ -1219,7 +1219,7 @@
       '<div class="modal-backdrop" data-close-detail></div>' +
       '<div class="sheet">' +
         '<div class="sheet-head"><div class="detail-word">关于</div>' +
-        '<div class="detail-lemma">单词镜头 · 网页版 1.0</div></div>' +
+        '<div class="detail-lemma">单词视界 · 网页版 1.0</div></div>' +
         section('隐私', '不联网做识别。照片只在这台设备的浏览器里处理，不上传。\n生词本和历史存在本机浏览器里。') +
         section('识别', '用 Tesseract.js 在浏览器里本地识别。比原生 App 慢，准确率也低一些，好处是不用安装、不用审核。') +
         section('词典', '53513 词条，来自开源项目 ECDICT（MIT 许可证）。') +
