@@ -69,7 +69,8 @@
   }
 
   function isCandidate(token, isKnown) {
-    if (token.length < 2 || token.length > 25) return false;
+    // 教材单词基本都是 3 个字母以上；两个字母的多半是 OCR 碎片
+    if (token.length < 3 || token.length > 25) return false;
     if (!/^[A-Za-z'’\-]+$/.test(token)) return false;
 
     const letters = (token.match(/[A-Za-z]/g) || []).length;

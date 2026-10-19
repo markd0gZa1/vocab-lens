@@ -21,6 +21,7 @@
   };
 
   let ocrWorker = null;
+  let itemSeq = 0;
   let lastAccent = 'US';
   let speakingWord = null;
   let speakingAccent = null;
@@ -204,6 +205,248 @@
 
   // ---------------------------------------------------------------- 识别
 
+  // ---------------------------------------------------------------- 识别参数（可以用 ?psm=11&bin=0 之类临时覆盖，便于调试）
+
+  const query = new URLSearchParams(location.search);
+  const CFG = {
+    // paddle = PP-OCRv4 视觉模型（准，体积大）；tesseract = 老方案（轻，效果差）
+    engine: query.get('engine') || 'paddle',
+    psm: query.get('psm') || '11',
+    whitelist: query.get('wl') !== '0',
+    // 实测：书页照片上二值化会把细笔画吃掉，反而更差
+    binarize: query.get('bin') === '1',
+    minConfidence: parseInt(query.get('conf') || '0', 10),
+    maxSide: parseInt(query.get('side') || '2000', 10),
+    minSide: parseInt(query.get('minside') || '1200', 10)
+  };
+
+  // ---------------------------------------------------------------- PP-OCRv4（视觉模型）
+
+  let paddleEngine = null;
+
+  function loadScript(src) {
+    return new Promise(function (resolve, reject) {
+      const script = document.createElement('script');
+      script.src = src;
+      script.onload = resolve;
+      script.onerror = function () { reject(new Error('加载失败：' + src)); };
+      document.head.appendChild(script);
+    });
+  }
+
+  async function ensurePaddle() {
+    if (paddleEngine) return paddleEngine;
+    if (!window.GutenOcr) {
+      state.progress = 0.05;
+      renderProgress();
+      // 用 ESM 加载：ORT 需要 import.meta.url 才能找到自己的 wasm
+      await import('./vendor/guten-ocr.mjs');
+    }
+    paddleEngine = await window.GutenOcr.create({
+      models: {
+        detectionPath: 'vendor/ocr/ch_PP-OCRv4_det_infer.onnx',
+        recognitionPath: 'vendor/ocr/ch_PP-OCRv4_rec_infer.onnx',
+        dictionaryPath: 'vendor/ocr/ppocr_keys_v1.txt'
+      }
+    });
+    return paddleEngine;
+  }
+
+  /** 找页面中间的竖直空白缝；找不到返回 null */
+  function findColumnGap(canvas) {
+    const context = canvas.getContext('2d');
+    const width = canvas.width;
+    const height = canvas.height;
+    const data = context.getImageData(0, 0, width, height).data;
+
+    const ink = new Uint32Array(width);
+    const step = Math.max(1, Math.floor(height / 600));
+    let samples = 0;
+
+    for (let y = 0; y < height; y += step) {
+      samples++;
+      for (let x = 0; x < width; x++) {
+        const offset = (y * width + x) * 4;
+        const luminance =
+          data[offset] * 0.299 + data[offset + 1] * 0.587 + data[offset + 2] * 0.114;
+        if (luminance < 110) ink[x]++;
+      }
+    }
+
+    // 一列里几乎没有墨迹 → 空白
+    const limit = samples * 0.012;
+    const from = Math.floor(width * 0.3);
+    const to = Math.floor(width * 0.7);
+
+    // 找「墨迹最少」的那条竖线（插图可能跨过中缝，所以用相对比较而不是绝对阈值）
+    const windowWidth = Math.max(2, Math.round(width * 0.006));
+    let totalInk = 0;
+    for (let x = from; x < to; x++) totalInk += ink[x];
+    const meanInk = totalInk / Math.max(1, to - from);
+
+    // 先找一段连续的低墨迹区域（相对阈值，比绝对阈值稳）
+    const threshold = Math.max(limit, meanInk * 0.25);
+    let runStart = -1;
+    let widest = null;
+    const runs = [];
+
+    const closeRun = (end) => {
+      if (runStart < 0) return;
+      const runWidth = end - runStart;
+      runs.push({ start: runStart, width: runWidth, center: runStart + runWidth / 2 });
+      if (!widest || runWidth > widest.width) {
+        widest = { start: runStart, width: runWidth, center: runStart + runWidth / 2 };
+      }
+      runStart = -1;
+    };
+
+    for (let x = from; x < to; x++) {
+      if (ink[x] <= threshold) {
+        if (runStart < 0) runStart = x;
+      } else {
+        closeRun(x);
+      }
+    }
+    closeRun(to);
+
+    // 空白带有好几段时，取最靠近页面中线的那条（分栏缝通常在中线附近）
+    let central = null;
+    for (const run of runs) {
+      if (run.width < width * 0.015) continue;
+      const distance = Math.abs(run.center - width / 2);
+      if (
+        !central ||
+        distance < central.distance - 0.5 ||
+        (Math.abs(distance - central.distance) <= 0.5 && run.width > central.run.width)
+      ) {
+        central = { run: run, distance: distance };
+      }
+    }
+
+    if (central) {
+      window.__gapDebug = {
+        mode: 'run',
+        width: central.run.width,
+        center: central.run.center,
+        meanInk: meanInk,
+        runs: runs.map((r) => [Math.round((r.center / width) * 100), r.width])
+      };
+      return Math.round(central.run.center);
+    }
+
+    // 退而求其次：找「最少墨迹」的那条竖线
+    let bestCenter = null;
+    let bestSum = Infinity;
+
+    for (let x = from; x < to; x++) {
+      let sum = 0;
+      for (let k = x - windowWidth; k <= x + windowWidth; k++) {
+        if (k >= 0 && k < width) sum += ink[k];
+      }
+      if (sum < bestSum) {
+        bestSum = sum;
+        bestCenter = x;
+      }
+    }
+
+    // 这条线明显比平均干净才算数
+    const ratio = meanInk > 0 ? bestSum / (meanInk * windowWidth * 2) : 1;
+    window.__gapDebug = { mode: 'min', bestCenter: bestCenter, ratio: ratio, meanInk: meanInk };
+    if (bestCenter !== null && ratio < 0.72) {
+      return bestCenter;
+    }
+    return null;
+  }
+
+  function cropCanvas(canvas, left, right) {
+    const out = document.createElement('canvas');
+    out.width = Math.max(1, right - left);
+    out.height = canvas.height;
+    out.getContext('2d').drawImage(canvas, left, 0, out.width, canvas.height, 0, 0, out.width, canvas.height);
+    return out;
+  }
+
+  /** 用视觉模型识别，返回「一行一行」的文本块 */
+  async function recognizeWithPaddle(canvas) {
+    const gap = findColumnGap(canvas);
+    window.__debug = { gap: gap, width: canvas.width };
+
+    if (gap && gap > canvas.width * 0.28 && gap < canvas.width * 0.78) {
+      // 两栏：分别识别，左栏在前，右栏在后
+      const leftCanvas = cropCanvas(canvas, 0, gap);
+      const rightCanvas = cropCanvas(canvas, gap, canvas.width);
+
+      const leftItems = await detectOn(leftCanvas, 0, canvas.width);
+      const rightItems = await detectOn(rightCanvas, gap, canvas.width);
+      window.__debug.left = leftItems.length;
+      window.__debug.right = rightItems.length;
+
+      // 保险：如果切完一侧几乎是空的，说明这不是两栏页，退回整图
+      if (leftItems.length >= 3 && rightItems.length >= 3) {
+        return leftItems.concat(rightItems).map(function (item, index) {
+          item.id = index;
+          return item;
+        });
+      }
+      window.__debug.fallback = true;
+    }
+
+    const items = await detectOn(canvas, 0, canvas.width);
+    window.__debug.whole = items.length;
+    return items;
+  }
+
+  /** `offset` 是这块画布在整张图里的起始 x（像素） */
+  async function detectOn(sourceCanvas, offset, totalWidth) {
+    const engine = await ensurePaddle();
+    state.progress = 0.4;
+    renderProgress();
+
+    const context = sourceCanvas.getContext('2d');
+    const imageData = context.getImageData(0, 0, sourceCanvas.width, sourceCanvas.height);
+
+    const result = await engine.detect({
+      data: imageData.data,
+      width: sourceCanvas.width,
+      height: sourceCanvas.height
+    });
+
+    const width = result.resizedImageWidth || sourceCanvas.width;
+    const height = result.resizedImageHeight || sourceCanvas.height;
+    const scale = sourceCanvas.width / width;
+
+    const items = [];
+
+    for (const line of result.texts || []) {
+      const text = (line.text || '').trim();
+      if (!text) continue;
+      const box = line.box;
+      if (!box || !box.length) continue;
+
+      let left = Infinity, top = Infinity, right = -Infinity, bottom = -Infinity;
+      for (const point of box) {
+        left = Math.min(left, point[0]);
+        top = Math.min(top, point[1]);
+        right = Math.max(right, point[0]);
+        bottom = Math.max(bottom, point[1]);
+      }
+
+      const item = {
+        id: itemSeq++,
+        text: text,
+        left: (offset + left * scale) / totalWidth,
+        right: (offset + right * scale) / totalWidth,
+        top: top / height,
+        bottom: bottom / height
+      };
+      item.midY = (item.top + item.bottom) / 2;
+      item.height = item.bottom - item.top;
+      items.push(item);
+    }
+
+    return items;
+  }
+
   function ensureWorker() {
     if (ocrWorker) return Promise.resolve(ocrWorker);
     return Tesseract.createWorker('eng', 1, {
@@ -216,10 +459,65 @@
           renderProgress();
         }
       }
-    }).then(function (worker) {
+    }).then(async function (worker) {
+      await worker.setParameters({
+        tessedit_pageseg_mode: CFG.psm,
+        tessedit_char_whitelist: CFG.whitelist
+          ? "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ'-"
+          : '',
+        preserve_interword_spaces: '1'
+      });
       ocrWorker = worker;
       return worker;
     });
+  }
+
+  /** Otsu 自动阈值：先转灰度，再按直方图找最佳黑白分界 */
+  function binarize(canvas) {
+    const context = canvas.getContext('2d');
+    const image = context.getImageData(0, 0, canvas.width, canvas.height);
+    const data = image.data;
+
+    const histogram = new Uint32Array(256);
+    for (let i = 0; i < data.length; i += 4) {
+      const gray = (data[i] * 0.299 + data[i + 1] * 0.587 + data[i + 2] * 0.114) | 0;
+      data[i] = data[i + 1] = data[i + 2] = gray;
+      histogram[gray]++;
+    }
+
+    const total = canvas.width * canvas.height;
+    let sum = 0;
+    for (let t = 0; t < 256; t++) sum += t * histogram[t];
+
+    let sumB = 0;
+    let weightB = 0;
+    let best = 0;
+    let threshold = 128;
+
+    for (let t = 0; t < 256; t++) {
+      weightB += histogram[t];
+      if (weightB === 0) continue;
+      const weightF = total - weightB;
+      if (weightF === 0) break;
+
+      sumB += t * histogram[t];
+      const meanB = sumB / weightB;
+      const meanF = (sum - sumB) / weightF;
+      const between = weightB * weightF * (meanB - meanF) * (meanB - meanF);
+
+      if (between > best) {
+        best = between;
+        threshold = t;
+      }
+    }
+
+    for (let i = 0; i < data.length; i += 4) {
+      const value = data[i] > threshold ? 255 : 0;
+      data[i] = data[i + 1] = data[i + 2] = value;
+      data[i + 3] = 255;
+    }
+
+    context.putImageData(image, 0, 0);
   }
 
   async function handleFile(file) {
@@ -231,8 +529,12 @@
 
     try {
       const bitmap = await createImageBitmap(file);
-      const maxSide = 1600;
-      const ratio = Math.min(1, maxSide / Math.max(bitmap.width, bitmap.height));
+      const longSide = Math.max(bitmap.width, bitmap.height);
+
+      let ratio = 1;
+      if (longSide > CFG.maxSide) ratio = CFG.maxSide / longSide;
+      else if (longSide < CFG.minSide) ratio = Math.min(2, CFG.minSide / longSide);
+
       const width = Math.max(1, Math.round(bitmap.width * ratio));
       const height = Math.max(1, Math.round(bitmap.height * ratio));
 
@@ -242,40 +544,50 @@
       canvas.getContext('2d').drawImage(bitmap, 0, 0, width, height);
       if (bitmap.close) bitmap.close();
 
-      const worker = await ensureWorker();
-      const result = await worker.recognize(canvas, {}, { blocks: true, text: true });
+      if (CFG.binarize) binarize(canvas);
 
-      const items = [];
-      let id = 0;
-      const blocks = result.data.blocks || [];
-      for (const block of blocks) {
-        for (const para of block.paragraphs || []) {
-          for (const line of para.lines || []) {
-            for (const word of line.words || []) {
-              const text = (word.text || '').trim();
-              if (!text) continue;
-              const box = word.bbox;
-              const item = {
-                id: id++,
-                text: text,
-                left: box.x0 / width,
-                top: box.y0 / height,
-                right: box.x1 / width,
-                bottom: box.y1 / height
-              };
-              item.midY = (item.top + item.bottom) / 2;
-              item.height = item.bottom - item.top;
-              items.push(item);
+      let items;
+
+      if (CFG.engine === 'paddle') {
+        items = await recognizeWithPaddle(canvas);
+      } else {
+        const worker = await ensureWorker();
+        const result = await worker.recognize(canvas, {}, { blocks: true, text: true });
+
+        items = [];
+        let id = 0;
+        const blocks = result.data.blocks || [];
+        for (const block of blocks) {
+          for (const para of block.paragraphs || []) {
+            for (const line of para.lines || []) {
+              for (const word of line.words || []) {
+                const text = (word.text || '').trim();
+                if (!text) continue;
+                if (CFG.minConfidence && (word.confidence || 0) < CFG.minConfidence) continue;
+                const box = word.bbox;
+                const item = {
+                  id: id++,
+                  text: text,
+                  left: box.x0 / width,
+                  top: box.y0 / height,
+                  right: box.x1 / width,
+                  bottom: box.y1 / height
+                };
+                item.midY = (item.top + item.bottom) / 2;
+                item.height = item.bottom - item.top;
+                items.push(item);
+              }
             }
           }
         }
       }
 
       const candidates = ReadingOrder.words(items, function (w) {
-        return Dictionary.contains(w);
+        return Dictionary.isVocabWord(w);
       });
+      window.__lastItems = items;
       const known = candidates.filter(function (w) {
-        return Dictionary.contains(w);
+        return Dictionary.isVocabWord(w);
       });
       const found = known.length ? known : candidates;
 
@@ -316,12 +628,12 @@
 
   function visibleWords() {
     if (state.showAll) return state.words;
-    const filtered = state.words.filter((w) => !Dictionary.lookup(w).empty);
+    const filtered = state.words.filter((w) => Dictionary.isVocabWord(w));
     return filtered.length ? filtered : state.words;
   }
 
   function hiddenCount() {
-    return state.words.filter((w) => Dictionary.lookup(w).empty).length;
+    return state.words.filter((w) => !Dictionary.isVocabWord(w)).length;
   }
 
   function wordRowMarkup(word, index) {

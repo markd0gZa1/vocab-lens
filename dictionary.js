@@ -61,6 +61,17 @@
     return entries.has(key) || lemmas.has(key);
   }
 
+  // 真正的单词，释义里会带词性标记：n. / vt. / a. / ad. …
+  // 缩写（rd、wr、Eg、EE）没有，正好用来筛掉 OCR 碎片
+  const POS_RE = /(^|[；;\s])(n\.|v\.|vt\.|vi\.|a\.|ad\.|adj\.|adv\.|prep\.|conj\.|pron\.|num\.|int\.|aux\.)/;
+
+  /** 这个词值不值得显示：词典里有、不是缩写、带词性 */
+  function isVocabWord(word) {
+    const entry = lookup(word);
+    if (entry.empty) return false;
+    return POS_RE.test(entry.meaning);
+  }
+
   function lookup(word) {
     const key = normalize(word);
 
@@ -128,6 +139,7 @@
     load: load,
     lookup: lookup,
     contains: contains,
+    isVocabWord: isVocabWord,
     isLoaded: function () { return loaded; }
   };
 })(window);

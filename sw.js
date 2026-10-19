@@ -1,4 +1,4 @@
-const CACHE = 'vocab-lens-v1';
+const CACHE = 'vocab-lens-v3';
 
 const PRECACHE = [
   './index.html',
