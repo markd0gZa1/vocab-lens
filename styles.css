@@ -378,6 +378,52 @@ button {
   font-size: 12px;
 }
 
+/* ---------------- 词库 ---------------- */
+
+.badge {
+  display: inline-block;
+  margin-left: 8px;
+  padding: 1px 8px;
+  border-radius: 999px;
+  background: rgba(115, 199, 255, 0.14);
+  color: var(--accent);
+  font-size: 11px;
+  font-weight: 600;
+  vertical-align: middle;
+}
+
+.book-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  width: 100%;
+  text-align: left;
+  padding: 14px 16px;
+}
+
+.book-row + .book-row {
+  border-top: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+.book-name {
+  font-size: 16px;
+  font-weight: 500;
+  color: var(--text);
+}
+
+.book-count {
+  font-size: 13px;
+  color: var(--text-2);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.book-row.on .book-name,
+.book-row.on .book-count {
+  color: var(--accent);
+}
+
 /* ---------------- 标签栏 ---------------- */
 
 #tabs {

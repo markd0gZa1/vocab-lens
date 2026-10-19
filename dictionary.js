@@ -166,11 +166,29 @@
     };
   }
 
+  /** 每个词书有多少词（第一次调用时算，之后缓存） */
+  let tagCounts = null;
+
+  function countByTag() {
+    if (tagCounts) return tagCounts;
+    const counts = {};
+    entries.forEach(function (fields) {
+      const tag = fields[3] || '';
+      tag.split(' ').forEach(function (code) {
+        if (code) counts[code] = (counts[code] || 0) + 1;
+      });
+    });
+    tagCounts = counts;
+    return counts;
+  }
+
   global.Dictionary = {
     load: load,
     lookup: lookup,
     contains: contains,
     isVocabWord: isVocabWord,
+    countByTag: countByTag,
+    total: function () { return entries.size; },
     isLoaded: function () { return loaded; }
   };
 })(window);

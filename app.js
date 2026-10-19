@@ -3,6 +3,31 @@
 
   // ---------------------------------------------------------------- 状态
 
+  const BOOKS = [
+    { code: 'zk', name: '中考', group: '中学' },
+    { code: 'gk', name: '高考', group: '中学' },
+    { code: 'cet4', name: '四级', group: '四六级' },
+    { code: 'cet6', name: '六级', group: '四六级' },
+    { code: 'ky', name: '考研', group: '考研' },
+    { code: 'toefl', name: '托福', group: '出国' },
+    { code: 'ielts', name: '雅思', group: '出国' },
+    { code: 'gre', name: 'GRE', group: '出国' }
+  ];
+
+  function bookName(code) {
+    if (code === 'all') return '全部词';
+    const found = BOOKS.find(function (b) { return b.code === code; });
+    return found ? found.name : code;
+  }
+
+  function savedWordbook() {
+    try {
+      return localStorage.getItem('vl.wordbook') || 'all';
+    } catch (e) {
+      return 'all';
+    }
+  }
+
   const state = {
     tab: 'scan',
     words: [],
@@ -14,7 +39,8 @@
     detail: null,
     historyDetail: null,
     dictReady: false,
-    dictError: null
+    dictError: null,
+    wordbook: savedWordbook()
   };
 
   const store = {
@@ -707,6 +733,13 @@
     const entry = Dictionary.lookup(word);
     const starred = isStarred(word);
 
+    const tag = entry.tag || '';
+    const inBook =
+      state.wordbook !== 'all' && tag.split(' ').indexOf(state.wordbook) >= 0;
+    const badge = inBook
+      ? ' <span class="badge">' + bookName(state.wordbook) + '</span>'
+      : '';
+
     let subline = '<div class="sub empty">词典未收录</div>';
     if (!entry.empty) {
       const parts = [];
@@ -722,7 +755,7 @@
       '<div class="row" data-word="' + esc(word) + '">' +
         (index == null ? '' : '<div class="index">' + (index + 1) + '</div>') +
         '<div class="text">' +
-          '<div class="word">' + esc(word) + '</div>' +
+          '<div class="word">' + esc(word) + badge + '</div>' +
           subline +
         '</div>' +
         '<button class="star' + (starred ? ' on' : '') + '" data-star="' + esc(word) + '" aria-label="收藏">★</button>' +
@@ -883,9 +916,66 @@
     );
   }
 
+  function libraryScreen() {
+    if (!Dictionary.isLoaded()) {
+      return (
+        '<div class="empty-state"><div class="spinner"></div>' +
+        '<div class="title">正在加载词库…</div></div>'
+      );
+    }
+
+    const counts = Dictionary.countByTag();
+
+    function starredIn(code) {
+      let n = 0;
+      for (const item of store.starred) {
+        const tag = Dictionary.lookup(item.word).tag || '';
+        if (tag.split(' ').indexOf(code) >= 0) n++;
+      }
+      return n;
+    }
+
+    let html =
+      '<header class="head"><h1>词库</h1><p>' +
+      (state.wordbook === 'all'
+        ? '当前全部词，扫描时不作标记'
+        : '当前「' + bookName(state.wordbook) + '」，扫描时会标出属于它的词') +
+      '</p></header><div class="list">';
+
+    html +=
+      '<div class="card">' +
+        '<button class="book-row' + (state.wordbook === 'all' ? ' on' : '') + '" data-book="all">' +
+          '<span class="book-name">全部词</span>' +
+          '<span class="book-count">' + Dictionary.total() + ' 词</span>' +
+        '</button>' +
+      '</div>';
+
+    ['中学', '四六级', '考研', '出国'].forEach(function (group) {
+      html += '<div class="group-title">' + group + '</div><div class="card">';
+
+      BOOKS.filter(function (b) { return b.group === group; }).forEach(function (book) {
+        const count = counts[book.code] || 0;
+        const starred = starredIn(book.code);
+        html +=
+          '<button class="book-row' + (state.wordbook === book.code ? ' on' : '') + '" data-book="' + book.code + '">' +
+            '<span class="book-name">' + book.name + '</span>' +
+            '<span class="book-count">' + count + ' 词' +
+              (starred ? ' · 已收藏 ' + starred : '') +
+            '</span>' +
+          '</button>';
+      });
+
+      html += '</div>';
+    });
+
+    html += '</div>';
+    return html;
+  }
+
   function tabsMarkup() {
     const tabs = [
       ['scan', '扫描'],
+      ['library', '词库'],
       ['starred', '生词本'],
       ['history', '历史']
     ];
@@ -907,6 +997,7 @@
   function render() {
     let html;
     if (state.historyDetail) html = historyDetailScreen();
+    else if (state.tab === 'library') html = libraryScreen();
     else if (state.tab === 'starred') html = starredScreen();
     else if (state.tab === 'history') html = historyScreen();
     else html = scanScreen();
@@ -1053,6 +1144,16 @@
     if (target.closest('[data-tab]')) {
       state.tab = target.closest('[data-tab]').dataset.tab;
       state.historyDetail = null;
+      render();
+      return;
+    }
+
+    const bookBtn = target.closest('[data-book]');
+    if (bookBtn) {
+      state.wordbook = bookBtn.dataset.book;
+      try {
+        localStorage.setItem('vl.wordbook', state.wordbook);
+      } catch (e) { /* 存不下就算了 */ }
       render();
       return;
     }
