@@ -9,6 +9,7 @@
     showAll: false,
     busy: false,
     progress: 0,
+    progressLabel: null,
     message: null,
     detail: null,
     historyDetail: null,
@@ -224,6 +225,72 @@
   // ---------------------------------------------------------------- PP-OCRv4（视觉模型）
 
   let paddleEngine = null;
+  let assetsReady = false;
+
+  const PADDLE_ASSETS = [
+    'vendor/guten-ocr.mjs',
+    'vendor/ort/ort-wasm-simd-threaded.wasm',
+    'vendor/ort/ort-wasm-simd-threaded.mjs',
+    'vendor/ocr/ch_PP-OCRv4_det_infer.onnx',
+    'vendor/ocr/ch_PP-OCRv4_rec_infer.onnx',
+    'vendor/ocr/ppocr_keys_v1.txt'
+  ];
+
+  /** 把识别引擎的静态文件先下载下来，顺便报告真实进度（第一次大约 39 MB） */
+  async function prefetchAssets() {
+    if (assetsReady) return;
+
+    // 先问一下每个文件多大
+    const sizes = await Promise.all(
+      PADDLE_ASSETS.map(async function (url) {
+        try {
+          const response = await fetch(url, { method: 'HEAD' });
+          return parseInt(response.headers.get('content-length') || '0', 10) || 0;
+        } catch (e) {
+          return 0;
+        }
+      })
+    );
+
+    const total = sizes.reduce(function (a, b) { return a + b; }, 0) || 1;
+    let loaded = 0;
+
+    for (let i = 0; i < PADDLE_ASSETS.length; i++) {
+      const url = PADDLE_ASSETS[i];
+      const response = await fetch(url);
+      if (!response.ok) throw new Error('下载失败：' + url);
+
+      if (!response.body || !response.body.getReader) {
+        loaded += sizes[i];
+        continue;
+      }
+
+      const reader = response.body.getReader();
+      let fileBytes = 0;
+
+      while (true) {
+        const chunk = await reader.read();
+        if (chunk.done) break;
+
+        fileBytes += chunk.value.length;
+        const progress = Math.min(0.92, 0.06 + ((loaded + fileBytes) / total) * 0.86);
+        state.progress = progress;
+        state.progressLabel =
+          '正在下载识别引擎… ' +
+          ((loaded + fileBytes) / 1048576).toFixed(1) +
+          ' / ' +
+          (total / 1048576).toFixed(0) +
+          ' MB（只需下载一次）';
+        renderProgress();
+      }
+
+      loaded += sizes[i] || fileBytes;
+    }
+
+    assetsReady = true;
+    state.progressLabel = '正在准备识别…';
+    renderProgress();
+  }
 
   function loadScript(src) {
     return new Promise(function (resolve, reject) {
@@ -238,9 +305,7 @@
   async function ensurePaddle() {
     if (paddleEngine) return paddleEngine;
     if (!window.GutenOcr) {
-      state.progress = 0.05;
-      renderProgress();
-      // 用 ESM 加载：ORT 需要 import.meta.url 才能找到自己的 wasm
+      await prefetchAssets();
       await import('./vendor/guten-ocr.mjs');
     }
     paddleEngine = await window.GutenOcr.create({
@@ -525,6 +590,7 @@
     if (!file) return;
     state.busy = true;
     state.progress = 0;
+    state.progressLabel = '正在识别…';
     state.message = null;
     render();
 
@@ -834,6 +900,8 @@
   function renderProgress() {
     const bar = document.querySelector('.progress-fill');
     if (bar) bar.style.width = Math.round(state.progress * 100) + '%';
+    const label = document.querySelector('.progress-label');
+    if (label) label.textContent = state.progressLabel || '正在识别…';
   }
 
   function render() {
@@ -852,7 +920,7 @@
         '<div class="modal-backdrop"></div>' +
         '<div class="loading">' +
           '<div class="spinner"></div>' +
-          '<div>正在识别…</div>' +
+          '<div class="progress-label">' + esc(state.progressLabel || '正在识别…') + '</div>' +
           '<div class="progress"><div class="progress-fill" style="width:' + Math.round(state.progress * 100) + '%"></div></div>' +
         '</div>';
     } else if (state.detail) {
