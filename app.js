@@ -12,7 +12,8 @@
     message: null,
     detail: null,
     historyDetail: null,
-    dictReady: false
+    dictReady: false,
+    dictError: null
   };
 
   const store = {
@@ -675,7 +676,23 @@
 
   function scanScreen() {
     if (!Dictionary.isLoaded()) {
-      return '<div class="empty-state"><div class="icon">📖</div><div>正在加载词典…</div></div>';
+      if (state.dictError) {
+        return (
+          '<div class="empty-state">' +
+            '<div class="icon">😵</div>' +
+            '<div class="title">词典没加载成功</div>' +
+            '<div class="hint">' + esc(state.dictError) + '</div>' +
+            '<button class="wide" data-retry-dict style="max-width:220px">重试</button>' +
+          '</div>'
+        );
+      }
+      return (
+        '<div class="empty-state">' +
+          '<div class="spinner"></div>' +
+          '<div class="title">正在加载词典…</div>' +
+          '<div class="hint">首次大约 3.5 MB，加载完就存在手机里，以后不用再等</div>' +
+        '</div>'
+      );
     }
 
     const words = visibleWords();
@@ -998,6 +1015,11 @@
       return;
     }
 
+    if (target.closest('[data-retry-dict]')) {
+      loadDictionary();
+      return;
+    }
+
     if (target.closest('[data-about]')) {
       state.detail = null;
       showAbout();
@@ -1038,15 +1060,20 @@
 
   // ---------------------------------------------------------------- 启动
 
-  window.addEventListener('load', async function () {
+  async function loadDictionary() {
+    state.dictError = null;
     render();
-
     try {
       await Dictionary.load('dictionary.tsv');
     } catch (error) {
-      state.message = '词典加载失败：' + error.message;
+      state.dictError = (error && error.message) || String(error);
     }
     render();
+  }
+
+  window.addEventListener('load', async function () {
+    render();
+    await loadDictionary();
 
     if ('serviceWorker' in navigator) {
       navigator.serviceWorker.register('sw.js').catch(function () {});
