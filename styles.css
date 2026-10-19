@@ -378,6 +378,93 @@ button {
   font-size: 12px;
 }
 
+/* ---------------- 单词 / 句子 ---------------- */
+
+.mode-row {
+  display: flex;
+  gap: 8px;
+  padding: 0 16px 8px;
+}
+
+.mode-chip {
+  padding: 6px 16px;
+  border-radius: 999px;
+  background: var(--chip);
+  color: var(--text-2);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.mode-chip.on {
+  background: rgba(115, 199, 255, 0.14);
+  color: var(--accent);
+}
+
+.sentence-card {
+  background: var(--card);
+  border-radius: 16px;
+  padding: 16px;
+  margin-bottom: 10px;
+  cursor: pointer;
+}
+
+.sentence-text {
+  font-size: 16px;
+  line-height: 1.55;
+  color: var(--text);
+}
+
+.g-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.g-chip {
+  padding: 2px 9px;
+  border-radius: 999px;
+  background: rgba(115, 199, 255, 0.12);
+  color: var(--accent);
+  font-size: 11px;
+  font-weight: 500;
+}
+
+.sentence-detail {
+  margin-top: 12px;
+}
+
+.clause {
+  display: flex;
+  gap: 8px;
+  padding: 2px 0;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.clause-role {
+  flex: none;
+  color: rgba(115, 199, 255, 0.85);
+  font-size: 12px;
+}
+
+.clause-text {
+  color: var(--text-2);
+}
+
+.grammar-note {
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: var(--text-3);
+  padding: 2px 0;
+}
+
+.web-note {
+  margin-top: 12px;
+  font-size: 12px;
+  color: var(--text-3);
+}
+
 /* ---------------- 词库 ---------------- */
 
 .badge {

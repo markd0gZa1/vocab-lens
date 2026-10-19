@@ -1,4 +1,4 @@
-const CACHE = 'vocab-lens-v8';
+const CACHE = 'vocab-lens-v9';
 // 词典单独放一个缓存，不随版本更新被清掉
 const DICT_CACHE = 'vocab-lens-dict';
 
@@ -8,6 +8,7 @@ const PRECACHE = [
   './app.js',
   './reading-order.js',
   './dictionary.js',
+  './sentence-parse.js',
   './manifest.webmanifest',
   './icons/icon-192.png',
   './icons/icon-512.png'

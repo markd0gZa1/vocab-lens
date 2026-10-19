@@ -31,6 +31,9 @@
   const state = {
     tab: 'scan',
     words: [],
+    article: '',
+    viewMode: 'words',
+    expandedSentence: null,
     showAll: false,
     busy: false,
     progress: 0,
@@ -612,6 +615,50 @@
     context.putImageData(image, 0, 0);
   }
 
+  /** 把一个粘在一起的串按词典切回单词，比如 peoplewho → people who。
+   *  用动态规划：认识的分段不扣分，不认识的分段重罚，这样整体最优。 */
+  function splitStuck(token) {
+    const n = token.length;
+    const best = new Array(n + 1).fill(null);
+    best[0] = { cost: 0, parts: [] };
+
+    for (let i = 0; i < n; i++) {
+      if (!best[i]) continue;
+
+      for (let length = Math.min(20, n - i); length >= 1; length--) {
+        const piece = token.substr(i, length);
+        const known = length >= 2 && Dictionary.contains(piece);
+        const cost = known ? 0 : 60 * length;
+        const total = best[i].cost + cost;
+
+        if (!best[i + length] || total < best[i + length].cost) {
+          best[i + length] = { cost: total, parts: best[i].parts.concat([piece]) };
+        }
+      }
+    }
+
+    return best[n] ? best[n].parts : [token];
+  }
+
+  /** OCR 有时会把单词粘在一起，这里按词典补回空格 */
+  function respace(text) {
+    return text
+      .split(/\s+/)
+      .map(function (token) {
+        const clean = token.replace(/^[^A-Za-z]+|[^A-Za-z]+$/g, '');
+        if (clean.length < 6) return token;
+        if (Dictionary.contains(clean)) return token;
+
+        const parts = splitStuck(clean);
+        if (parts.length < 2) return token;
+
+        const prefix = token.match(/^[^A-Za-z]*/)[0];
+        const suffix = token.match(/[^A-Za-z]*$/)[0];
+        return prefix + parts.join(' ') + suffix;
+      })
+      .join(' ');
+  }
+
   async function handleFile(file) {
     if (!file) return;
     state.busy = true;
@@ -679,6 +726,12 @@
         return Dictionary.isVocabWord(w);
       });
       window.__lastItems = items;
+
+      // 按阅读顺序拼出全文，给长难句拆解用；顺手把粘在一起的单词补回空格
+      const ordered = ReadingOrder.ordered(items);
+      state.article = ordered.map(function (item) { return respace(item.text); }).join('\n');
+      state.viewMode = 'words';
+      state.expandedSentence = null;
       const known = candidates.filter(function (w) {
         return Dictionary.isVocabWord(w);
       });
@@ -773,6 +826,68 @@
     return '<div class="card">' + rows.join('') + '</div>';
   }
 
+  /** 句子视图：逐句拆解 */
+  function sentencesMarkup() {
+    const sentences = SentenceParse.splitSentences(state.article);
+
+    if (!sentences.length) {
+      return '<div class="empty-state"><div class="title">这一页没有可切分的句子</div></div>';
+    }
+
+    return (
+      '<div class="list">' +
+      sentences
+        .map(function (sentence, index) {
+          const analysis = SentenceParse.analyze(sentence, Dictionary.lookup);
+          const expanded = state.expandedSentence === index;
+
+          const chips = analysis.points
+            .map(function (point) {
+              return '<span class="g-chip">' + esc(point.name) + '</span>';
+            })
+            .join('');
+
+          let detail = '';
+          if (expanded) {
+            const structure = analysis.clauses
+              .map(function (clause) {
+                return (
+                  '<div class="clause">' +
+                  '<span class="clause-role">' + esc(clause.role || '主句') + '</span>' +
+                  '<span class="clause-text">' + esc(clause.text) + '</span>' +
+                  '</div>'
+                );
+              })
+              .join('');
+
+            const notes = analysis.points
+              .map(function (point) {
+                return '<div class="grammar-note">· ' + esc(point.note) + '</div>';
+              })
+              .join('');
+
+            detail =
+              '<div class="sentence-detail">' +
+              '<div class="detail-title">结构</div>' +
+              structure +
+              (notes ? '<div class="detail-title">语法点</div>' + notes : '') +
+              '<div class="web-note">网页版暂不支持翻译：浏览器不允许网页调用 http 接口</div>' +
+              '</div>';
+          }
+
+          return (
+            '<div class="sentence-card' + (expanded ? ' open' : '') + '" data-sentence="' + index + '">' +
+            '<div class="sentence-text">' + esc(sentence) + '</div>' +
+            (chips ? '<div class="g-chips">' + chips + '</div>' : '') +
+            detail +
+            '</div>'
+          );
+        })
+        .join('') +
+      '</div>'
+    );
+  }
+
   function scanScreen() {
     if (!Dictionary.isLoaded()) {
       if (state.dictError) {
@@ -815,12 +930,23 @@
           '<div class="hint">点单词听发音，点「英音/美音」选口音，长按看完整释义</div>' +
         '</div>';
     } else {
-      body =
-        '<div class="list">' + listMarkup(words, true) + '</div>' +
-        '<div class="footer">' +
-          '<button class="wide" data-speak-all>' + (speakingAll ? '■ 停止' : '▶ 全部朗读') + '</button>' +
-          '<button class="square" data-clear>🗑</button>' +
+      const chips =
+        '<div class="mode-row">' +
+          '<button class="mode-chip' + (state.viewMode === 'words' ? ' on' : '') + '" data-mode="words">单词</button>' +
+          '<button class="mode-chip' + (state.viewMode === 'sentences' ? ' on' : '') + '" data-mode="sentences">句子</button>' +
         '</div>';
+
+      if (state.viewMode === 'sentences') {
+        body = chips + sentencesMarkup();
+      } else {
+        body =
+          chips +
+          '<div class="list">' + listMarkup(words, true) + '</div>' +
+          '<div class="footer">' +
+            '<button class="wide" data-speak-all>' + (speakingAll ? '■ 停止' : '▶ 全部朗读') + '</button>' +
+            '<button class="square" data-clear>🗑</button>' +
+          '</div>';
+      }
     }
 
     return (
@@ -1137,6 +1263,22 @@
 
     if (target.closest('[data-toggle-all]')) {
       state.showAll = !state.showAll;
+      render();
+      return;
+    }
+
+    const modeBtn = target.closest('[data-mode]');
+    if (modeBtn) {
+      state.viewMode = modeBtn.dataset.mode;
+      state.expandedSentence = null;
+      render();
+      return;
+    }
+
+    const sentenceCard = target.closest('[data-sentence]');
+    if (sentenceCard) {
+      const index = parseInt(sentenceCard.dataset.sentence, 10);
+      state.expandedSentence = state.expandedSentence === index ? null : index;
       render();
       return;
     }
