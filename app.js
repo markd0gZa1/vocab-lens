@@ -763,6 +763,15 @@
         bottom = Math.max(bottom, point[1]);
       }
 
+      // 文本框上边的倾角，用来判断整页歪了多少
+      let angle = 0;
+      if (box.length >= 2) {
+        let deg = (Math.atan2(box[1][1] - box[0][1], box[1][0] - box[0][0]) * 180) / Math.PI;
+        while (deg > 45) deg -= 90;
+        while (deg < -45) deg += 90;
+        angle = deg;
+      }
+
       const item = {
         id: itemSeq++,
         text: text,
@@ -773,6 +782,8 @@
       };
       item.midY = (item.top + item.bottom) / 2;
       item.height = item.bottom - item.top;
+      item.angle = angle;
+      item.width = item.right - item.left;
       items.push(item);
     }
 
@@ -825,16 +836,37 @@
     }
 
     const parts = best[n] ? best[n].parts : [token];
-    if (parts.length <= 1) return parts;
+    if (parts.length > 1) {
+      // 只有每一段都是真词才认这个切法。像 enmissions 这种 OCR 错词，
+      // 硬切会变成 enm|is|sions，还不如原样留着。
+      const trustworthy = parts.every(function (piece) {
+        return Dictionary.contains(piece) &&
+          (piece.length >= 2 || SHORT_WORDS.indexOf(piece.toLowerCase()) >= 0);
+      });
+      if (trustworthy) return parts;
+    }
 
-    // 只有每一段都是真词才认这个切法。像 enmissions 这种 OCR 错词，
-    // 硬切会变成 enm|is|sions，还不如原样留着。
-    const trustworthy = parts.every(function (piece) {
-      return Dictionary.contains(piece) &&
-        (piece.length >= 2 || SHORT_WORDS.indexOf(piece.toLowerCase()) >= 0);
-    });
+    // 有的 OCR 模型（比如 PP-OCRv5）会把一整句粘成一个超长串。
+    // 这种情况用贪心切：每次取能认出的最长前缀。
+    if (n >= 12 && !Dictionary.contains(token)) {
+      const greedy = [];
+      let cursor = 0;
+      while (cursor < n) {
+        let take = 0;
+        for (let length = Math.min(20, n - cursor); length >= 2; length--) {
+          if (Dictionary.contains(token.substr(cursor, length))) {
+            take = length;
+            break;
+          }
+        }
+        if (!take) take = 1;
+        greedy.push(token.substr(cursor, take));
+        cursor += take;
+      }
+      if (greedy.length > 1) return greedy;
+    }
 
-    return trustworthy ? parts : [token];
+    return [token];
   }
 
   /** OCR 常把空格吃掉。只对 6 个字母以上的纯字母段做切分，标点原样保留。 */
@@ -904,7 +936,16 @@
         const limit = Math.max(height * 0.6, medianGap * 1.9);
         // 换栏时 x 会突然跳一大截，这时候必须断段，不然左右两栏会连成一段
         const columnJump = Math.abs((line.left || 0) - (prev.left || 0)) > 0.15;
-        if (gap > limit || gap < 0 || columnJump) flush();
+
+        // 上一行没写完句子（没有标点收尾），下一行又是小写开头 → 这是同一句话折行，
+        // 练习册里的填空、长句折行都靠这条接回去
+        const tailText = (current[current.length - 1] || '').trim();
+        const wraps =
+          tailText.length > 0 &&
+          !/[.!?。！？:：;；]$/.test(tailText) &&
+          /^[a-z(（",'']/.test(line.text);
+
+        if ((gap > limit || gap < 0 || columnJump) && !wraps) flush();
       }
 
       if (current.length) {
@@ -968,6 +1009,104 @@
     return { sentences: sentences, layout: layout };
   }
 
+  /** 用 OCR 文本框的上边缘算整页倾角（加权中位数） */
+  function medianAngle(items) {
+    const rows = items
+      .filter(function (item) { return item.angle != null && isFinite(item.angle); })
+      .map(function (item) { return { angle: item.angle, weight: Math.max(1, item.width || 0.05) }; })
+      .sort(function (a, b) { return a.angle - b.angle; });
+
+    if (!rows.length) return 0;
+
+    const total = rows.reduce(function (sum, row) { return sum + row.weight; }, 0);
+    let acc = 0;
+    for (const row of rows) {
+      acc += row.weight;
+      if (acc >= total / 2) return row.angle;
+    }
+    return rows[rows.length - 1].angle;
+  }
+
+  /** 估一下这一页歪了多少度：正文行摆正时，横向墨迹投影的方差最大 */
+  function estimateSkew(canvas) {
+    const scale = Math.min(1, 600 / Math.max(canvas.width, canvas.height));
+    const w = Math.max(1, Math.round(canvas.width * scale));
+    const h = Math.max(1, Math.round(canvas.height * scale));
+
+    const small = document.createElement('canvas');
+    small.width = w;
+    small.height = h;
+    const ctx = small.getContext('2d');
+    ctx.drawImage(canvas, 0, 0, w, h);
+
+    const data = ctx.getImageData(0, 0, w, h).data;
+    const ink = new Uint8Array(w * h);
+    for (let i = 0; i < w * h; i++) {
+      const lum = data[i * 4] * 0.299 + data[i * 4 + 1] * 0.587 + data[i * 4 + 2] * 0.114;
+      ink[i] = lum < 128 ? 1 : 0;
+    }
+
+    const cx = w / 2;
+    const cy = h / 2;
+    let best = 0;
+    let bestScore = -1;
+
+    for (let angle = -8; angle <= 8; angle += 1) {
+      const rad = (angle * Math.PI) / 180;
+      const cos = Math.cos(rad);
+      const sin = Math.sin(rad);
+      const rows = new Float32Array(h);
+
+      for (let y = 0; y < h; y += 2) {
+        for (let x = 0; x < w; x += 2) {
+          if (!ink[y * w + x]) continue;
+          const dx = x - cx;
+          const dy = y - cy;
+          const ry = Math.round(-dx * sin + dy * cos + cy);
+          if (ry >= 0 && ry < h) rows[ry] += 1;
+        }
+      }
+
+      let mean = 0;
+      for (let y = 0; y < h; y++) mean += rows[y];
+      mean /= h;
+
+      let variance = 0;
+      for (let y = 0; y < h; y++) {
+        const d = rows[y] - mean;
+        variance += d * d;
+      }
+
+      if (variance > bestScore) {
+        bestScore = variance;
+        best = angle;
+      }
+    }
+
+    return best;
+  }
+
+  /** 把画布转正；转完补白边，不裁掉内容 */
+  function rotateCanvas(canvas, degrees) {
+    const rad = (degrees * Math.PI) / 180;
+    const w = canvas.width;
+    const h = canvas.height;
+    const cos = Math.abs(Math.cos(rad));
+    const sin = Math.abs(Math.sin(rad));
+
+    const out = document.createElement('canvas');
+    out.width = Math.round(w * cos + h * sin);
+    out.height = Math.round(w * sin + h * cos);
+
+    const ctx = out.getContext('2d');
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(0, 0, out.width, out.height);
+    ctx.translate(out.width / 2, out.height / 2);
+    ctx.rotate(rad);
+    ctx.drawImage(canvas, -w / 2, -h / 2);
+    return out;
+  }
+
   async function handleFile(file) {
     if (!file) return;
     state.busy = true;
@@ -996,13 +1135,28 @@
 
       if (CFG.binarize) binarize(canvas);
 
+      let upright = canvas;
       let items;
 
       if (CFG.engine === 'paddle') {
-        items = await recognizeWithPaddle(canvas);
+        items = await recognizeWithPaddle(upright);
+
+        // 先认一遍量出倾斜角；歪得明显就转正再认一遍
+        const skew = medianAngle(items);
+        window.__skew = skew;
+        if (Math.abs(skew) >= 1.5) {
+          state.progressLabel = '正在把照片摆正…';
+          renderProgress();
+          const straightened = rotateCanvas(upright, -skew);
+          const second = await recognizeWithPaddle(straightened);
+          if (second.length >= Math.max(3, items.length * 0.8)) {
+            upright = straightened;
+            items = second;
+          }
+        }
       } else {
         const worker = await ensureWorker();
-        const result = await worker.recognize(canvas, {}, { blocks: true, text: true });
+        const result = await worker.recognize(upright, {}, { blocks: true, text: true });
 
         items = [];
         let id = 0;
@@ -1075,7 +1229,7 @@
       state.showAll = false;
       try {
         // 只留识别到的文字范围，页面空白不要，对照起来更省地方
-        state.photo = makePhoto(canvas, items);
+        state.photo = makePhoto(upright, items);
       } catch (e) {
         state.photo = null;
       }
@@ -1083,7 +1237,7 @@
       if (!found.length) {
         state.message = '没找到英文单词。试试把书页拍正、拍满一点。';
       } else {
-        addHistory(found, makeThumb(canvas));
+        addHistory(found, makeThumb(upright));
       }
     } catch (error) {
       state.message = '识别出错了：' + (error && error.message ? error.message : error);
