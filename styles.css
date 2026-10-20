@@ -575,6 +575,21 @@ svg {
   height: 17px;
 }
 
+.speed-btn {
+  width: 62px;
+  border-radius: 14px;
+  background: var(--card);
+  border: 1px solid var(--line);
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--text-2);
+}
+
+.speed-btn:active {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
 .square {
   width: 50px;
   display: flex;
@@ -729,6 +744,13 @@ svg {
 
 .sent {
   cursor: pointer;
+  transition: background-color 0.2s;
+}
+
+.sent.playing {
+  background: var(--accent-soft);
+  border-radius: 6px;
+  box-shadow: 0 0 0 4px var(--accent-soft);
 }
 
 .sent-block {

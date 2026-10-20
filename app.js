@@ -36,6 +36,15 @@
     }
   }
 
+  function savedRate() {
+    try {
+      const value = parseFloat(localStorage.getItem('vl.rate') || '');
+      return value >= 0.6 && value <= 1.4 ? value : 0.92;
+    } catch (e) {
+      return 0.92;
+    }
+  }
+
   function savedLayout() {
     try {
       return localStorage.getItem('vl.layout') || 'list';
@@ -70,7 +79,8 @@
     dictReady: false,
     dictError: null,
     wordbook: savedWordbook(),
-    theme: savedTheme()
+    theme: savedTheme(),
+    speechRate: savedRate()
   };
 
   // 调试/自检用，正式界面不依赖它
@@ -239,7 +249,7 @@
 
     const utterance = new SpeechSynthesisUtterance(text);
     utterance.lang = chosen === 'UK' ? 'en-GB' : 'en-US';
-    utterance.rate = rate || 0.9;
+    utterance.rate = rate || state.speechRate;
 
     const voice = voiceFor(chosen);
     if (voice) utterance.voice = voice;
@@ -313,16 +323,28 @@
       const accent = lastAccent;
       const utterance = new SpeechSynthesisUtterance(sentences[index++]);
       utterance.lang = accent === 'UK' ? 'en-GB' : 'en-US';
-      utterance.rate = 0.92;
+      utterance.rate = state.speechRate;
       const voice = voiceFor(accent);
       if (voice) utterance.voice = voice;
       utterance.onend = next;
       utterance.onerror = next;
       speechSynthesis.speak(utterance);
       render();
+      keepPlayingInView();
     };
 
     next();
+  }
+
+  /** 朗读时让正在念的那一句留在屏幕里 */
+  function keepPlayingInView() {
+    if (!speakingAll || speakingSentence == null) return;
+    const el = document.querySelector('.sent.playing');
+    if (el && el.scrollIntoView) {
+      try {
+        el.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+      } catch (e) { /* 老浏览器不支持就算了 */ }
+    }
   }
 
   function stopSpeaking() {
@@ -403,7 +425,7 @@
   let assetsReady = false;
 
   const PADDLE_ASSETS = [
-    'vendor/guten-ocr.mjs',
+    'vendor/guten-ocr.js',
     'vendor/ort/ort-wasm-simd-threaded.wasm',
     'vendor/ort/ort-wasm-simd-threaded.mjs',
     'vendor/ocr/ch_PP-OCRv4_det_infer.onnx',
@@ -469,7 +491,7 @@
     if (paddleEngine) return paddleEngine;
     if (!window.GutenOcr) {
       await prefetchAssets();
-      await import('./vendor/guten-ocr.mjs');
+      await import('./vendor/guten-ocr.js');
     }
     paddleEngine = await window.GutenOcr.create({
       models: {
@@ -1188,8 +1210,10 @@
     const sentence = state.reading.sentences[index];
     if (!sentence) return '';
 
+    const playing = speakingAll && speakingSentence === index;
+
     return (
-      '<span class="sent" data-sent="' + index + '">' +
+      '<span class="sent' + (playing ? ' playing' : '') + '" data-sent="' + index + '">' +
         sentenceMarkup(sentence.text) +
         '<button class="sent-play" data-play-sent="' + index + '" aria-label="朗读这句">' +
           (speakingSentence === index ? ICONS.stop : ICONS.play) +
@@ -1263,6 +1287,10 @@
       '<div class="read-card">' + inner + '</div>' +
       '<div class="read-hint">点单词查词，点句子听整句，句末小三角单独朗读</div>'
     );
+  }
+
+  function rateLabel() {
+    return state.speechRate <= 0.85 ? '慢速' : state.speechRate >= 1.05 ? '快速' : '常速';
   }
 
   function scanToolbar() {
@@ -1352,6 +1380,7 @@
             '<button class="wide" data-read-all>' +
               (speakingAll ? ICONS.stop + '停止' : ICONS.speaker + '朗读全文') +
             '</button>' +
+            '<button class="speed-btn" data-rate aria-label="语速">' + rateLabel() + '</button>' +
             '<button class="square" data-clear aria-label="清空">' + ICONS.trash + '</button>' +
           '</div>';
       } else {
@@ -1814,6 +1843,17 @@
       return;
     }
 
+    if (target.closest('[data-rate]')) {
+      const next = state.speechRate <= 0.85 ? 0.92 : state.speechRate < 1.05 ? 1.15 : 0.75;
+      state.speechRate = next;
+      try {
+        localStorage.setItem('vl.rate', String(next));
+      } catch (e) { /* 存不下就算了 */ }
+      if (speakingAll) speakArticle();
+      else render();
+      return;
+    }
+
     if (target.closest('[data-grammar-toggle]')) {
       state.showGrammar = !state.showGrammar;
       render();
@@ -1978,6 +2018,17 @@
     applyTheme();
     render();
     await loadDictionary();
+
+    // 词典好了就趁空闲把识别引擎先下下来；开了省流量就算了
+    const connection = navigator.connection || {};
+    const saveData = connection.saveData === true;
+    if (!saveData && !assetsReady) {
+      const start = function () {
+        prefetchAssets().catch(function () {});
+      };
+      if (window.requestIdleCallback) window.requestIdleCallback(start, { timeout: 3000 });
+      else setTimeout(start, 2000);
+    }
 
     if ('serviceWorker' in navigator) {
       navigator.serviceWorker.register('sw.js').catch(function () {});
