@@ -667,7 +667,7 @@
   // 常见的两字母真词；除此之外的两字母碎片在切词时要罚分
   const SHORT_WORDS = [
     'an', 'as', 'at', 'be', 'by', 'do', 'go', 'he', 'if', 'in', 'is', 'it',
-    'me', 'my', 'no', 'of', 'on', 'or', 'so', 'to', 'up', 'us', 'we'
+    'me', 'my', 'no', 'of', 'on', 'or', 'so', 'to', 'up', 'us', 'we', 'a', 'i'
   ];
 
   /** 把一个粘在一起的串按词典切回单词，比如 peoplewho → people who。
@@ -692,9 +692,10 @@
       for (let length = Math.min(20, n - i); length >= 1; length--) {
         const piece = token.substr(i, length);
         const known = length >= 2 && Dictionary.contains(piece);
-        // 两字母的碎片（ad、sin、eg）几乎总是切错了，除非是真·常用词
+        // 一两个字母的碎片（ad、sin、e）几乎总是切错了，除非是真·常用词；
+        // 罚分要比「整词不认识」还重，宁可原样留着
         let cost = known ? 0 : 60 * length;
-        if (known && length === 2 && SHORT_WORDS.indexOf(piece.toLowerCase()) < 0) cost += 4;
+        if (length <= 2 && SHORT_WORDS.indexOf(piece.toLowerCase()) < 0) cost += 999;
         const total = best[i].cost + cost;
 
         const candidate = {
@@ -708,7 +709,17 @@
       }
     }
 
-    return best[n] ? best[n].parts : [token];
+    const parts = best[n] ? best[n].parts : [token];
+    if (parts.length <= 1) return parts;
+
+    // 只有每一段都是真词才认这个切法。像 enmissions 这种 OCR 错词，
+    // 硬切会变成 enm|is|sions，还不如原样留着。
+    const trustworthy = parts.every(function (piece) {
+      return Dictionary.contains(piece) &&
+        (piece.length >= 2 || SHORT_WORDS.indexOf(piece.toLowerCase()) >= 0);
+    });
+
+    return trustworthy ? parts : [token];
   }
 
   /** OCR 常把空格吃掉。只对 6 个字母以上的纯字母段做切分，标点原样保留。 */
