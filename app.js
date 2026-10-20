@@ -48,6 +48,8 @@
     tab: 'scan',
     words: [],
     paragraphs: [],
+    photo: null,
+    photoOpen: false,
     reading: { sentences: [], layout: [] },
     viewMode: 'words', // words | reading
     layout: savedLayout(), // list | grid
@@ -895,6 +897,12 @@
 
       state.words = found;
       state.showAll = false;
+      try {
+        // 只留识别到的文字范围，页面空白不要，对照起来更省地方
+        state.photo = makePhoto(canvas, items);
+      } catch (e) {
+        state.photo = null;
+      }
 
       if (!found.length) {
         state.message = '没找到英文单词。试试把书页拍正、拍满一点。';
@@ -908,6 +916,39 @@
       state.overlay = null;
       render();
     }
+  }
+
+  /** 把整张照片按文字范围裁一下，再转成 dataURL */
+  function makePhoto(canvas, items) {
+    if (items && items.length) {
+      let left = 1, top = 1, right = 0, bottom = 0;
+      for (const item of items) {
+        left = Math.min(left, item.left);
+        top = Math.min(top, item.top);
+        right = Math.max(right, item.right);
+        bottom = Math.max(bottom, item.bottom);
+      }
+
+      if (right > left && bottom > top) {
+        const padX = Math.max(0.01, (right - left) * 0.03);
+        const padY = Math.max(0.012, (bottom - top) * 0.06);
+
+        const x0 = Math.max(0, Math.floor((left - padX) * canvas.width));
+        const y0 = Math.max(0, Math.floor((top - padY) * canvas.height));
+        const x1 = Math.min(canvas.width, Math.ceil((right + padX) * canvas.width));
+        const y1 = Math.min(canvas.height, Math.ceil((bottom + padY) * canvas.height));
+
+        if (x1 - x0 > 20 && y1 - y0 > 20) {
+          const out = document.createElement('canvas');
+          out.width = x1 - x0;
+          out.height = y1 - y0;
+          out.getContext('2d').drawImage(canvas, x0, y0, out.width, out.height, 0, 0, out.width, out.height);
+          return out.toDataURL('image/jpeg', 0.85);
+        }
+      }
+    }
+
+    return canvas.toDataURL('image/jpeg', 0.82);
   }
 
   function makeThumb(canvas) {
@@ -1230,6 +1271,13 @@
     let body = '';
 
     if (state.words.length || state.reading.sentences.length) {
+      if (state.photo) {
+        body +=
+          '<button class="photo-card" data-photo aria-label="查看原图">' +
+            '<img src="' + state.photo + '" alt="原图">' +
+            '<span class="photo-caption">原图 · 点开看大图</span>' +
+          '</button>';
+      }
       body += scanToolbar();
 
       if (state.viewMode === 'reading') {
@@ -1470,6 +1518,16 @@
           '<div class="loading-title">' + esc(state.overlay.title || '处理中') + '</div>' +
           '<div class="progress-label">' + esc(state.overlay.hint || '') + '</div>' +
           '<div class="progress"><div class="progress-fill" style="width:' + Math.round(progress * 100) + '%"></div></div>' +
+        '</div>';
+      return;
+    }
+
+    if (state.photoOpen && state.photo) {
+      overlay.hidden = false;
+      overlay.innerHTML =
+        '<div class="photo-full" data-close-photo>' +
+          '<img src="' + state.photo + '" alt="原图">' +
+          '<div class="photo-close">点任意处关闭</div>' +
         '</div>';
       return;
     }
@@ -1715,6 +1773,8 @@
       stopSpeaking();
       state.words = [];
       state.paragraphs = [];
+      state.photo = null;
+      state.photoOpen = false;
       state.reading = { sentences: [], layout: [] };
       state.transZh = {};
       state.message = null;
@@ -1768,6 +1828,18 @@
 
     if (target.closest('[data-back]')) {
       state.historyDetail = null;
+      render();
+      return;
+    }
+
+    if (target.closest('[data-photo]')) {
+      state.photoOpen = true;
+      render();
+      return;
+    }
+
+    if (target.closest('[data-close-photo]')) {
+      state.photoOpen = false;
       render();
       return;
     }
