@@ -1273,3 +1273,127 @@ svg {
   height: 96px;
   margin-bottom: -4px;
 }
+
+
+/* ---------------- 设置 ---------------- */
+
+.set-group {
+  margin-bottom: 12px;
+  padding: 2px 14px;
+  border-radius: 16px;
+  background: var(--card-2);
+}
+
+.set-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 0;
+}
+
+.set-text {
+  flex: 1;
+  min-width: 0;
+}
+
+.set-title {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.set-sub {
+  margin-top: 2px;
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--text-3);
+}
+
+.switch {
+  position: relative;
+  width: 48px;
+  height: 28px;
+  flex: none;
+  border-radius: 999px;
+  background: var(--line);
+  transition: background-color 0.2s;
+}
+
+.switch span {
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.22);
+  transition: transform 0.2s;
+}
+
+.switch.on {
+  background: var(--accent);
+}
+
+.switch.on span {
+  transform: translateX(20px);
+}
+
+.set-note {
+  padding: 0 0 12px;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--text-3);
+}
+
+.set-key {
+  display: flex;
+  gap: 8px;
+  padding-bottom: 10px;
+}
+
+.key-input {
+  flex: 1;
+  min-width: 0;
+  padding: 10px 12px;
+  border-radius: 10px;
+  border: 1px solid var(--line);
+  background: var(--card);
+  color: var(--text);
+  font-size: 13px;
+  font-family: inherit;
+}
+
+.key-input:focus {
+  outline: 2px solid var(--accent-soft);
+}
+
+.key-save {
+  padding: 0 14px;
+  border-radius: 10px;
+  background: var(--accent);
+  color: #fff;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+:root[data-theme="dark"] .key-save {
+  color: #241a0e;
+}
+
+.set-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding-bottom: 12px;
+}
+
+.set-status.ok {
+  font-size: 12px;
+  color: #3f9163;
+}
+
+.set-status.fail {
+  font-size: 12px;
+  color: var(--danger);
+}

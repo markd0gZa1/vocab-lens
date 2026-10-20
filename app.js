@@ -36,6 +36,15 @@
     }
   }
 
+  function savedFlag(key, fallback) {
+    try {
+      const raw = localStorage.getItem(key);
+      return raw == null ? fallback : raw === '1';
+    } catch (e) {
+      return fallback;
+    }
+  }
+
   function savedRate() {
     try {
       const value = parseFloat(localStorage.getItem('vl.rate') || '');
@@ -80,7 +89,11 @@
     dictError: null,
     wordbook: savedWordbook(),
     theme: savedTheme(),
-    speechRate: savedRate()
+    speechRate: savedRate(),
+    showPhoto: savedFlag('vl.showPhoto', true),
+    aiEnabled: savedFlag('vl.ai', false),
+    settingsOpen: false,
+    aiTesting: null
   };
 
   // 调试/自检用，正式界面不依赖它
@@ -115,6 +128,7 @@
     sun: '<svg viewBox="0 0 24 24" ' + S + '><circle cx="12" cy="12" r="4"/><path d="M12 2.6v2M12 19.4v2M2.6 12h2M19.4 12h2M5.4 5.4l1.4 1.4M17.2 17.2l1.4 1.4M18.6 5.4l-1.4 1.4M6.8 17.2l-1.4 1.4"/></svg>',
     moon: '<svg viewBox="0 0 24 24" ' + S + '><path d="M20.6 13.4A8.7 8.7 0 1 1 10.6 3.4a7 7 0 0 0 10 10z"/></svg>',
     info: '<svg viewBox="0 0 24 24" ' + S + '><circle cx="12" cy="12" r="8.6"/><path d="M12 11.2v5.2"/><path d="M12 7.9h.01"/></svg>',
+    gear: '<svg viewBox="0 0 24 24" ' + S + '><circle cx="12" cy="12" r="3.2"/><path d="M19.4 14.2a1.6 1.6 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.6 1.6 0 0 0-1.8-.3 1.6 1.6 0 0 0-1 1.5V20a2 2 0 1 1-4 0v-.1a1.6 1.6 0 0 0-1-1.5 1.6 1.6 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.6 1.6 0 0 0 .3-1.8 1.6 1.6 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.6 1.6 0 0 0 1.5-1 1.6 1.6 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.6 1.6 0 0 0 1.8.3H9a1.6 1.6 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.6 1.6 0 0 0 1 1.5 1.6 1.6 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.6 1.6 0 0 0-.3 1.8V9a1.6 1.6 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.6 1.6 0 0 0-1.5 1z"/></svg>',
     play: '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M7.5 4.6v14.8L20 12z"/></svg>',
     stop: '<svg viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="6" width="12" height="12" rx="2.4"/></svg>',
     trash: '<svg viewBox="0 0 24 24" ' + S + '><path d="M4 7h16M9.4 7V4.8h5.2V7M6.4 7l.9 12.2h9.4L17.6 7"/></svg>',
@@ -1023,9 +1037,28 @@
       });
       window.__lastItems = items;
 
-      const paragraphs = buildParagraphs(items);
+      let paragraphs = buildParagraphs(items);
       state.paragraphs = paragraphs;
       state.reading = buildReading(paragraphs);
+
+      // AI 增强：把识别出来的文字交给 DeepSeek 校正（只发文字，不发照片）
+      if (state.aiEnabled && AI.hasKey() && paragraphs.length) {
+        state.overlay = { title: 'AI 校正中', hint: '把识别文字整理成正确的英文', progress: 0.9, cat: 'think' };
+        render();
+        try {
+          const cleaned = await AI.cleanText(paragraphs.join('\n\n'));
+          const parts = cleaned
+            .split(/\n\s*\n/)
+            .map(function (part) { return part.trim(); })
+            .filter(Boolean);
+          if (parts.length) {
+            state.paragraphs = parts;
+            state.reading = buildReading(parts);
+          }
+        } catch (error) {
+          state.message = 'AI 校正失败，已用本地识别结果';
+        }
+      }
 
       state.viewMode = 'words';
       state.showTrans = false;
@@ -1125,49 +1158,82 @@
     state.transPending = {};
     todo.forEach(function (item) { state.transPending[item.i] = true; });
 
-    let first = true;
-    state.overlay = {
-      title: '正在准备翻译',
-      hint: '翻译模型约 107 MB，只需下载一次，之后离线可用',
-      progress: 0,
-      cat: 'think'
-    };
-    render();
+    let useAI = state.aiEnabled && AI.hasKey();
 
-    try {
-      for (const item of todo) {
-        const zh = await Translator.translateOne(item.text, function (p) {
-          if (first && state.overlay) {
-            state.overlay.progress = p.ratio;
-            state.overlay.hint =
-              '正在下载翻译模型 ' +
-              (p.loaded / 1048576).toFixed(0) +
-              ' / ' +
-              (p.total / 1048576).toFixed(0) +
-              ' MB';
-            renderProgress();
-          }
+    if (useAI) {
+      state.overlay = {
+        title: 'AI 翻译中',
+        hint: '正在通过 DeepSeek 逐句翻译',
+        progress: 0.6,
+        cat: 'think'
+      };
+      render();
+
+      try {
+        const translated = await AI.translateSentences(todo.map(function (item) { return item.text; }));
+        todo.forEach(function (item, index) {
+          state.transZh[item.i] = translated[index] || '';
+          delete state.transPending[item.i];
         });
-
-        if (first) {
-          first = false;
-          state.overlay = null;
-          render();
-        }
-
-        state.transZh[item.i] = zh;
-        delete state.transPending[item.i];
-        render();
+      } catch (error) {
+        state.message = 'AI 翻译失败，改用本地翻译';
+        useAI = false;
+      } finally {
+        state.overlay = null;
       }
-    } catch (error) {
-      state.showTrans = false;
-      state.message = '翻译失败：' + (error && error.message ? error.message : error);
-    } finally {
-      state.translating = false;
-      state.transPending = {};
-      state.overlay = null;
       render();
     }
+
+    if (!useAI) {
+      let first = true;
+      state.overlay = {
+        title: '正在准备翻译',
+        hint: '翻译模型约 107 MB，只需下载一次，之后离线可用',
+        progress: 0,
+        cat: 'think'
+      };
+      render();
+
+      try {
+        for (const item of todo) {
+          if (state.transZh[item.i]) {
+            delete state.transPending[item.i];
+            continue;
+          }
+
+          const zh = await Translator.translateOne(item.text, function (p) {
+            if (first && state.overlay) {
+              state.overlay.progress = p.ratio;
+              state.overlay.hint =
+                '正在下载翻译模型 ' +
+                (p.loaded / 1048576).toFixed(0) +
+                ' / ' +
+                (p.total / 1048576).toFixed(0) +
+                ' MB';
+              renderProgress();
+            }
+          });
+
+          if (first) {
+            first = false;
+            state.overlay = null;
+            render();
+          }
+
+          state.transZh[item.i] = zh;
+          delete state.transPending[item.i];
+          render();
+        }
+      } catch (error) {
+        state.showTrans = false;
+        state.message = '翻译失败：' + (error && error.message ? error.message : error);
+      }
+    }
+
+    state.translating = false;
+    state.transPending = {};
+    state.overlay = null;
+    render();
   }
 
   // ---------------------------------------------------------------- 渲染
@@ -1431,7 +1497,7 @@
           '</div>' +
         '</div>';
 
-      if (state.photo) {
+      if (state.photo && state.showPhoto) {
         body +=
           '<button class="photo-card" data-photo aria-label="查看原图">' +
             '<img src="' + state.photo + '" alt="原图">' +
@@ -1475,6 +1541,7 @@
         '<p>拍一页，读懂一整页</p>' +
         '<div class="head-actions">' +
           '<button class="icon-btn" data-theme-toggle>' + (resolvedTheme() === 'dark' ? ICONS.sun : ICONS.moon) + '</button>' +
+          '<button class="icon-btn" data-settings>' + ICONS.gear + '</button>' +
           '<button class="icon-btn" data-about>' + ICONS.info + '</button>' +
         '</div>' +
       '</header>' +
@@ -1683,6 +1750,12 @@
       return;
     }
 
+    if (state.settingsOpen) {
+      overlay.hidden = false;
+      overlay.innerHTML = settingsMarkup();
+      return;
+    }
+
     if (state.photoOpen && state.photo) {
       overlay.hidden = false;
       overlay.innerHTML =
@@ -1707,6 +1780,54 @@
 
     overlay.hidden = true;
     overlay.innerHTML = '';
+  }
+
+  function settingsMarkup() {
+    const hasKey = AI.hasKey();
+
+    const row = function (title, subtitle, on, attr) {
+      return (
+        '<div class="set-row">' +
+          '<div class="set-text"><div class="set-title">' + title + '</div>' +
+          (subtitle ? '<div class="set-sub">' + subtitle + '</div>' : '') +
+          '</div>' +
+          '<button class="switch' + (on ? ' on' : '') + '" data-' + attr + ' role="switch" aria-checked="' + on + '">' +
+            '<span></span>' +
+          '</button>' +
+        '</div>'
+      );
+    };
+
+    return (
+      '<div class="modal-backdrop" data-close-detail></div>' +
+      '<div class="sheet">' +
+        '<div class="sheet-head"><div class="detail-word" style="font-size:24px">设置</div></div>' +
+
+        '<div class="set-group">' +
+          row('显示原图', '识别结果上方显示拍的那张照片', state.showPhoto, 'toggle-photo') +
+        '</div>' +
+
+        '<div class="set-group">' +
+          row('AI 增强（DeepSeek）', '用你的 DeepSeek 账号校正识别文字、翻译整段',
+              state.aiEnabled, 'toggle-ai') +
+          '<div class="set-note">开启后只会把「识别出的文字」发到 DeepSeek，照片不会离开这台设备。' +
+            '关掉就完全本地。</div>' +
+
+          '<div class="set-key">' +
+            '<input id="ai-key" class="key-input" type="password" autocomplete="off" ' +
+              'placeholder="粘贴 DeepSeek API Key（sk-…）" value="' + esc(hasKey ? 'saved' : '') + '">' +
+            '<button class="key-save" data-save-key>保存</button>' +
+          '</div>' +
+          '<div class="set-actions">' +
+            '<button class="mini-btn" data-test-ai>测试连接</button>' +
+            (state.aiTesting === 'ok' ? '<span class="set-status ok">连接正常</span>' : '') +
+            (state.aiTesting === 'fail' ? '<span class="set-status fail">连接失败，检查 Key</span>' : '') +
+          '</div>' +
+        '</div>' +
+
+        '<button class="close-detail" data-close-detail>关闭</button>' +
+      '</div>'
+    );
   }
 
   function detailMarkup(word) {
@@ -2001,6 +2122,53 @@
     if (target.closest('[data-back]')) {
       state.historyDetail = null;
       render();
+      return;
+    }
+
+    if (target.closest('[data-settings]')) {
+      state.settingsOpen = true;
+      state.aiTesting = null;
+      render();
+      return;
+    }
+
+    if (target.closest('[data-toggle-photo]')) {
+      state.showPhoto = !state.showPhoto;
+      try { localStorage.setItem('vl.showPhoto', state.showPhoto ? '1' : '0'); } catch (e) {}
+      render();
+      return;
+    }
+
+    if (target.closest('[data-toggle-ai]')) {
+      state.aiEnabled = !state.aiEnabled;
+      try { localStorage.setItem('vl.ai', state.aiEnabled ? '1' : '0'); } catch (e) {}
+      render();
+      return;
+    }
+
+    if (target.closest('[data-save-key]')) {
+      const input = document.getElementById('ai-key');
+      const value = input ? input.value.trim() : '';
+      if (value && value !== 'saved') {
+        try { localStorage.setItem('vl.aiKey', value); } catch (e) {}
+      }
+      state.aiTesting = null;
+      render();
+      return;
+    }
+
+    if (target.closest('[data-test-ai]')) {
+      state.aiTesting = 'testing';
+      render();
+      AI.test()
+        .then(function () {
+          state.aiTesting = 'ok';
+          render();
+        })
+        .catch(function () {
+          state.aiTesting = 'fail';
+          render();
+        });
       return;
     }
 
