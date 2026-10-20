@@ -8,7 +8,9 @@
 
   function splitColumns(items, depth) {
     depth = depth || 0;
-    if (depth >= 2 || items.length < 10) return [items];
+    // 原来要求 10 块以上才尝试分栏，结果半页 9 行的两栏页永远切不开，
+    // 左右两栏按行交错读。6 块（每栏各 3 行）就该试了。
+    if (depth >= 2 || items.length < 6) return [items];
 
     // 横跨两栏的宽块（大标题、横幅）不参与分栏判断
     const narrow = items.filter((it) => it.right - it.left <= 0.45);
@@ -21,7 +23,7 @@
       if (narrow.some((it) => it.left < x && it.right > x)) continue;
       const left = narrow.filter((it) => it.right <= x).length;
       const right = narrow.filter((it) => it.left >= x).length;
-      if (left < 4 || right < 4) continue;
+      if (left < 3 || right < 3) continue;
       const balance = Math.min(left, right);
       if (balance > bestBalance) {
         bestBalance = balance;

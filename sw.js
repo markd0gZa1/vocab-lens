@@ -1,4 +1,4 @@
-const CACHE = 'vocab-lens-v9';
+const CACHE = 'vocab-lens-v11';
 // 词典单独放一个缓存，不随版本更新被清掉
 const DICT_CACHE = 'vocab-lens-dict';
 
@@ -6,6 +6,7 @@ const PRECACHE = [
   './index.html',
   './styles.css',
   './app.js',
+  './translate.js',
   './reading-order.js',
   './dictionary.js',
   './sentence-parse.js',
@@ -47,6 +48,10 @@ self.addEventListener('fetch', (event) => {
 
   // 词典太大，交给页面自己用 Cache API 管，别在请求链路上复制一遍
   if (url.pathname.endsWith('dictionary.tsv')) return;
+
+  // 翻译模型（约 107 MB）由 transformers.js 自己缓存，这里再存一份纯属浪费空间，
+  // 而且它下载时会带 Range 请求，缓存半截文件反而会坏。
+  if (url.pathname.indexOf('/models/') >= 0) return;
 
   event.respondWith(
     caches.match(request).then((hit) => {

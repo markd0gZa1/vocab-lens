@@ -28,23 +28,51 @@
     }
   }
 
+  function savedTheme() {
+    try {
+      return localStorage.getItem('vl.theme') || 'auto';
+    } catch (e) {
+      return 'auto';
+    }
+  }
+
+  function savedLayout() {
+    try {
+      return localStorage.getItem('vl.layout') || 'list';
+    } catch (e) {
+      return 'list';
+    }
+  }
+
   const state = {
     tab: 'scan',
     words: [],
-    article: '',
-    viewMode: 'words',
-    expandedSentence: null,
+    paragraphs: [],
+    reading: { sentences: [], layout: [] },
+    viewMode: 'words', // words | reading
+    layout: savedLayout(), // list | grid
     showAll: false,
+    showTrans: false,
+    showGrammar: false,
+    transZh: {},
+    translating: false,
+    transPending: {},
     busy: false,
+    overlay: null, // { title, hint, progress }
     progress: 0,
     progressLabel: null,
     message: null,
     detail: null,
+    grammar: null,
     historyDetail: null,
     dictReady: false,
     dictError: null,
-    wordbook: savedWordbook()
+    wordbook: savedWordbook(),
+    theme: savedTheme()
   };
+
+  // 调试/自检用，正式界面不依赖它
+  window.__vl = state;
 
   const store = {
     starred: loadJSON('vl.starred', []),
@@ -57,6 +85,59 @@
   let speakingWord = null;
   let speakingAccent = null;
   let speakingAll = false;
+  let speakingSentence = null;
+
+  // ---------------------------------------------------------------- 图标
+
+  const S = 'stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" fill="none"';
+
+  const ICONS = {
+    scan: '<svg viewBox="0 0 24 24" ' + S + '><path d="M4 8.5V6a2 2 0 0 1 2-2h2.5M15.5 4H18a2 2 0 0 1 2 2v2.5M20 15.5V18a2 2 0 0 1-2 2h-2.5M8.5 20H6a2 2 0 0 1-2-2v-2.5"/><path d="M8 12h8"/></svg>',
+    book: '<svg viewBox="0 0 24 24" ' + S + '><path d="M4 19.2A2.8 2.8 0 0 1 6.8 16.4H20"/><path d="M6.8 2.2H20v19.6H6.8A2.8 2.8 0 0 1 4 19V5A2.8 2.8 0 0 1 6.8 2.2z"/></svg>',
+    star: '<svg viewBox="0 0 24 24" ' + S + '><path d="m12 3.2 2.7 5.5 6 .9-4.3 4.2 1 6-5.4-2.8-5.4 2.8 1-6L3.3 9.6l6-.9z"/></svg>',
+    starFill: '<svg viewBox="0 0 24 24" fill="currentColor"><path d="m12 3.2 2.7 5.5 6 .9-4.3 4.2 1 6-5.4-2.8-5.4 2.8 1-6L3.3 9.6l6-.9z"/></svg>',
+    clock: '<svg viewBox="0 0 24 24" ' + S + '><circle cx="12" cy="12" r="8.6"/><path d="M12 7.2V12l3.1 1.9"/></svg>',
+    camera: '<svg viewBox="0 0 24 24" ' + S + '><path d="M3 8.6A2.6 2.6 0 0 1 5.6 6h1.5l1-1.6A1.5 1.5 0 0 1 9.4 3.6h5.2a1.5 1.5 0 0 1 1.3.8l1 1.6h1.5A2.6 2.6 0 0 1 21 8.6v8.8A2.6 2.6 0 0 1 18.4 20H5.6A2.6 2.6 0 0 1 3 17.4z"/><circle cx="12" cy="12.8" r="3.5"/></svg>',
+    image: '<svg viewBox="0 0 24 24" ' + S + '><rect x="3" y="4.2" width="18" height="15.6" rx="2.6"/><circle cx="8.6" cy="9.6" r="1.5"/><path d="m4 17 4.7-4.6a1.6 1.6 0 0 1 2.2 0L15 16.6"/><path d="m14 14 1.9-1.8a1.6 1.6 0 0 1 2.2 0L20.4 14"/></svg>',
+    sun: '<svg viewBox="0 0 24 24" ' + S + '><circle cx="12" cy="12" r="4"/><path d="M12 2.6v2M12 19.4v2M2.6 12h2M19.4 12h2M5.4 5.4l1.4 1.4M17.2 17.2l1.4 1.4M18.6 5.4l-1.4 1.4M6.8 17.2l-1.4 1.4"/></svg>',
+    moon: '<svg viewBox="0 0 24 24" ' + S + '><path d="M20.6 13.4A8.7 8.7 0 1 1 10.6 3.4a7 7 0 0 0 10 10z"/></svg>',
+    info: '<svg viewBox="0 0 24 24" ' + S + '><circle cx="12" cy="12" r="8.6"/><path d="M12 11.2v5.2"/><path d="M12 7.9h.01"/></svg>',
+    play: '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M7.5 4.6v14.8L20 12z"/></svg>',
+    stop: '<svg viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="6" width="12" height="12" rx="2.4"/></svg>',
+    trash: '<svg viewBox="0 0 24 24" ' + S + '><path d="M4 7h16M9.4 7V4.8h5.2V7M6.4 7l.9 12.2h9.4L17.6 7"/></svg>',
+    speaker: '<svg viewBox="0 0 24 24" ' + S + '><path d="M4 9.4v5.2h3.2L12 18.4V5.6L7.2 9.4z"/><path d="M15.6 8.8a4.6 4.6 0 0 1 0 6.4"/></svg>',
+    list: '<svg viewBox="0 0 24 24" ' + S + '><path d="M8.5 6h11M8.5 12h11M8.5 18h11"/><path d="M4.5 6h.01M4.5 12h.01M4.5 18h.01"/></svg>',
+    grid: '<svg viewBox="0 0 24 24" ' + S + '><rect x="3.6" y="3.6" width="7" height="7" rx="1.6"/><rect x="13.4" y="3.6" width="7" height="7" rx="1.6"/><rect x="3.6" y="13.4" width="7" height="7" rx="1.6"/><rect x="13.4" y="13.4" width="7" height="7" rx="1.6"/></svg>',
+    translate: '<svg viewBox="0 0 24 24" ' + S + '><path d="M4 6h8M8 4v2c0 3.4-1.7 6.2-4.4 7.8M6.2 8.6c.9 2.4 2.8 4.2 5.2 5"/><path d="m12.4 20 3.6-9.4L19.6 20M13.8 16.8h4.6"/></svg>',
+    grammar: '<svg viewBox="0 0 24 24" ' + S + '><path d="M4 6.5h7M4 11.5h10M4 16.5h5"/><path d="m15.4 14.4 1.9 1.9 3.5-3.9"/></svg>',
+    chevron: '<svg viewBox="0 0 24 24" ' + S + '><path d="m14.5 6.5-5.5 5.5 5.5 5.5"/></svg>'
+  };
+
+  // ---------------------------------------------------------------- 主题
+
+  function resolvedTheme() {
+    if (state.theme === 'dark') return 'dark';
+    if (state.theme === 'light') return 'light';
+    return window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches
+      ? 'dark'
+      : 'light';
+  }
+
+  function applyTheme() {
+    const theme = resolvedTheme();
+    document.documentElement.dataset.theme = theme;
+    const meta = document.querySelector('meta[name="theme-color"]');
+    if (meta) meta.setAttribute('content', theme === 'dark' ? '#14161b' : '#f6f1e7');
+  }
+
+  function toggleTheme() {
+    state.theme = resolvedTheme() === 'dark' ? 'light' : 'dark';
+    try {
+      localStorage.setItem('vl.theme', state.theme);
+    } catch (e) { /* 存不下就算了 */ }
+    applyTheme();
+    render();
+  }
 
   // ---------------------------------------------------------------- 工具
 
@@ -92,7 +173,7 @@
     const diff = Math.round((startOf(today) - startOf(d)) / 86400000);
     if (diff === 0) return '今天';
     if (diff === 1) return '昨天';
-    return (d.getMonth() + 1) + '月' + d.getDate() + '日';
+    return d.getMonth() + 1 + '月' + d.getDate() + '日';
   }
 
   function timeLabel(ts) {
@@ -120,6 +201,7 @@
 
     speechSynthesis.cancel();
     speakingAll = false;
+    speakingSentence = null;
 
     const utterance = new SpeechSynthesisUtterance(word);
     utterance.lang = chosen === 'UK' ? 'en-GB' : 'en-US';
@@ -143,6 +225,31 @@
     render();
   }
 
+  /** 念一段文本（句子 / 整段），rate 可调 */
+  function speakText(text, accent, rate) {
+    if (!window.speechSynthesis) return;
+    const chosen = accent || lastAccent;
+    lastAccent = chosen;
+
+    speechSynthesis.cancel();
+    speakingAll = false;
+    speakingWord = null;
+
+    const utterance = new SpeechSynthesisUtterance(text);
+    utterance.lang = chosen === 'UK' ? 'en-GB' : 'en-US';
+    utterance.rate = rate || 0.9;
+
+    const voice = voiceFor(chosen);
+    if (voice) utterance.voice = voice;
+
+    utterance.onend = () => {
+      speakingSentence = null;
+      render();
+    };
+
+    speechSynthesis.speak(utterance);
+  }
+
   function speakAll(words) {
     if (!window.speechSynthesis || !words.length) return;
     if (speakingAll) {
@@ -153,6 +260,7 @@
     speechSynthesis.cancel();
     speakingAll = true;
     speakingWord = null;
+    speakingSentence = null;
 
     let index = 0;
     const next = () => {
@@ -176,11 +284,51 @@
     render();
   }
 
+  /** 依次念整段的所有句子 */
+  function speakArticle() {
+    if (!window.speechSynthesis) return;
+    if (speakingAll) {
+      stopSpeaking();
+      return;
+    }
+
+    const sentences = state.reading.sentences.map((s) => s.text);
+    if (!sentences.length) return;
+
+    speechSynthesis.cancel();
+    speakingAll = true;
+    speakingWord = null;
+
+    let index = 0;
+    const next = () => {
+      if (index >= sentences.length || !speakingAll) {
+        speakingAll = false;
+        speakingSentence = null;
+        render();
+        return;
+      }
+      speakingSentence = index;
+      const accent = lastAccent;
+      const utterance = new SpeechSynthesisUtterance(sentences[index++]);
+      utterance.lang = accent === 'UK' ? 'en-GB' : 'en-US';
+      utterance.rate = 0.92;
+      const voice = voiceFor(accent);
+      if (voice) utterance.voice = voice;
+      utterance.onend = next;
+      utterance.onerror = next;
+      speechSynthesis.speak(utterance);
+      render();
+    };
+
+    next();
+  }
+
   function stopSpeaking() {
     if (window.speechSynthesis) speechSynthesis.cancel();
     speakingAll = false;
     speakingWord = null;
     speakingAccent = null;
+    speakingSentence = null;
     render();
   }
 
@@ -234,24 +382,20 @@
     return known.length ? known : entry.words;
   }
 
-  // ---------------------------------------------------------------- 识别
-
-  // ---------------------------------------------------------------- 识别参数（可以用 ?psm=11&bin=0 之类临时覆盖，便于调试）
+  // ---------------------------------------------------------------- 识别参数
 
   const query = new URLSearchParams(location.search);
   const CFG = {
-    // paddle = PP-OCRv4 视觉模型（准，体积大）；tesseract = 老方案（轻，效果差）
     engine: query.get('engine') || 'paddle',
     psm: query.get('psm') || '11',
     whitelist: query.get('wl') !== '0',
-    // 实测：书页照片上二值化会把细笔画吃掉，反而更差
     binarize: query.get('bin') === '1',
     minConfidence: parseInt(query.get('conf') || '0', 10),
     maxSide: parseInt(query.get('side') || '2000', 10),
     minSide: parseInt(query.get('minside') || '1200', 10)
   };
 
-  // ---------------------------------------------------------------- PP-OCRv4（视觉模型）
+  // ---------------------------------------------------------------- PP-OCRv4
 
   let paddleEngine = null;
   let assetsReady = false;
@@ -265,11 +409,9 @@
     'vendor/ocr/ppocr_keys_v1.txt'
   ];
 
-  /** 把识别引擎的静态文件先下载下来，顺便报告真实进度（第一次大约 39 MB） */
   async function prefetchAssets() {
     if (assetsReady) return;
 
-    // 先问一下每个文件多大
     const sizes = await Promise.all(
       PADDLE_ASSETS.map(async function (url) {
         try {
@@ -321,16 +463,6 @@
     renderProgress();
   }
 
-  function loadScript(src) {
-    return new Promise(function (resolve, reject) {
-      const script = document.createElement('script');
-      script.src = src;
-      script.onload = resolve;
-      script.onerror = function () { reject(new Error('加载失败：' + src)); };
-      document.head.appendChild(script);
-    });
-  }
-
   async function ensurePaddle() {
     if (paddleEngine) return paddleEngine;
     if (!window.GutenOcr) {
@@ -368,18 +500,15 @@
       }
     }
 
-    // 一列里几乎没有墨迹 → 空白
     const limit = samples * 0.012;
     const from = Math.floor(width * 0.3);
     const to = Math.floor(width * 0.7);
 
-    // 找「墨迹最少」的那条竖线（插图可能跨过中缝，所以用相对比较而不是绝对阈值）
     const windowWidth = Math.max(2, Math.round(width * 0.006));
     let totalInk = 0;
     for (let x = from; x < to; x++) totalInk += ink[x];
     const meanInk = totalInk / Math.max(1, to - from);
 
-    // 先找一段连续的低墨迹区域（相对阈值，比绝对阈值稳）
     const threshold = Math.max(limit, meanInk * 0.25);
     let runStart = -1;
     let widest = null;
@@ -404,7 +533,6 @@
     }
     closeRun(to);
 
-    // 空白带有好几段时，取最靠近页面中线的那条（分栏缝通常在中线附近）
     let central = null;
     for (const run of runs) {
       if (run.width < width * 0.015) continue;
@@ -429,7 +557,6 @@
       return Math.round(central.run.center);
     }
 
-    // 退而求其次：找「最少墨迹」的那条竖线
     let bestCenter = null;
     let bestSum = Infinity;
 
@@ -444,7 +571,6 @@
       }
     }
 
-    // 这条线明显比平均干净才算数
     const ratio = meanInk > 0 ? bestSum / (meanInk * windowWidth * 2) : 1;
     window.__gapDebug = { mode: 'min', bestCenter: bestCenter, ratio: ratio, meanInk: meanInk };
     if (bestCenter !== null && ratio < 0.72) {
@@ -461,13 +587,11 @@
     return out;
   }
 
-  /** 用视觉模型识别，返回「一行一行」的文本块 */
   async function recognizeWithPaddle(canvas) {
     const gap = findColumnGap(canvas);
     window.__debug = { gap: gap, width: canvas.width };
 
     if (gap && gap > canvas.width * 0.28 && gap < canvas.width * 0.78) {
-      // 两栏：分别识别，左栏在前，右栏在后
       const leftCanvas = cropCanvas(canvas, 0, gap);
       const rightCanvas = cropCanvas(canvas, gap, canvas.width);
 
@@ -476,7 +600,6 @@
       window.__debug.left = leftItems.length;
       window.__debug.right = rightItems.length;
 
-      // 保险：如果切完一侧几乎是空的，说明这不是两栏页，退回整图
       if (leftItems.length >= 3 && rightItems.length >= 3) {
         return leftItems.concat(rightItems).map(function (item, index) {
           item.id = index;
@@ -491,7 +614,6 @@
     return items;
   }
 
-  /** `offset` 是这块画布在整张图里的起始 x（像素） */
   async function detectOn(sourceCanvas, offset, totalWidth) {
     const engine = await ensurePaddle();
     state.progress = 0.4;
@@ -542,85 +664,27 @@
     return items;
   }
 
-  function ensureWorker() {
-    if (ocrWorker) return Promise.resolve(ocrWorker);
-    return Tesseract.createWorker('eng', 1, {
-      workerPath: 'vendor/worker.min.js',
-      langPath: 'vendor',
-      corePath: 'vendor',
-      logger: function (message) {
-        if (message.status === 'recognizing text') {
-          state.progress = message.progress || 0;
-          renderProgress();
-        }
-      }
-    }).then(async function (worker) {
-      await worker.setParameters({
-        tessedit_pageseg_mode: CFG.psm,
-        tessedit_char_whitelist: CFG.whitelist
-          ? "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ'-"
-          : '',
-        preserve_interword_spaces: '1'
-      });
-      ocrWorker = worker;
-      return worker;
-    });
-  }
-
-  /** Otsu 自动阈值：先转灰度，再按直方图找最佳黑白分界 */
-  function binarize(canvas) {
-    const context = canvas.getContext('2d');
-    const image = context.getImageData(0, 0, canvas.width, canvas.height);
-    const data = image.data;
-
-    const histogram = new Uint32Array(256);
-    for (let i = 0; i < data.length; i += 4) {
-      const gray = (data[i] * 0.299 + data[i + 1] * 0.587 + data[i + 2] * 0.114) | 0;
-      data[i] = data[i + 1] = data[i + 2] = gray;
-      histogram[gray]++;
-    }
-
-    const total = canvas.width * canvas.height;
-    let sum = 0;
-    for (let t = 0; t < 256; t++) sum += t * histogram[t];
-
-    let sumB = 0;
-    let weightB = 0;
-    let best = 0;
-    let threshold = 128;
-
-    for (let t = 0; t < 256; t++) {
-      weightB += histogram[t];
-      if (weightB === 0) continue;
-      const weightF = total - weightB;
-      if (weightF === 0) break;
-
-      sumB += t * histogram[t];
-      const meanB = sumB / weightB;
-      const meanF = (sum - sumB) / weightF;
-      const between = weightB * weightF * (meanB - meanF) * (meanB - meanF);
-
-      if (between > best) {
-        best = between;
-        threshold = t;
-      }
-    }
-
-    for (let i = 0; i < data.length; i += 4) {
-      const value = data[i] > threshold ? 255 : 0;
-      data[i] = data[i + 1] = data[i + 2] = value;
-      data[i + 3] = 255;
-    }
-
-    context.putImageData(image, 0, 0);
-  }
+  // 常见的两字母真词；除此之外的两字母碎片在切词时要罚分
+  const SHORT_WORDS = [
+    'an', 'as', 'at', 'be', 'by', 'do', 'go', 'he', 'if', 'in', 'is', 'it',
+    'me', 'my', 'no', 'of', 'on', 'or', 'so', 'to', 'up', 'us', 'we'
+  ];
 
   /** 把一个粘在一起的串按词典切回单词，比如 peoplewho → people who。
-   *  用动态规划：认识的分段不扣分，不认识的分段重罚，这样整体最优。 */
+   *  同样是 0 代价的切法可能有好几种（scientist|shave 和 scientists|have 都成立），
+   *  这里按「段数少 → 第一段长」来挑，实测更接近原文。 */
   function splitStuck(token) {
     const n = token.length;
     const best = new Array(n + 1).fill(null);
-    best[0] = { cost: 0, parts: [] };
+    best[0] = { cost: 0, count: 0, score: 0, parts: [] };
+
+    const better = function (candidate, current) {
+      if (!current) return true;
+      if (candidate.cost !== current.cost) return candidate.cost < current.cost;
+      if (candidate.count !== current.count) return candidate.count < current.count;
+      // 段数一样时，碎片越长越像真词（books|in 优于 book|sin）
+      return candidate.score > current.score;
+    };
 
     for (let i = 0; i < n; i++) {
       if (!best[i]) continue;
@@ -628,40 +692,116 @@
       for (let length = Math.min(20, n - i); length >= 1; length--) {
         const piece = token.substr(i, length);
         const known = length >= 2 && Dictionary.contains(piece);
-        const cost = known ? 0 : 60 * length;
+        // 两字母的碎片（ad、sin、eg）几乎总是切错了，除非是真·常用词
+        let cost = known ? 0 : 60 * length;
+        if (known && length === 2 && SHORT_WORDS.indexOf(piece.toLowerCase()) < 0) cost += 4;
         const total = best[i].cost + cost;
 
-        if (!best[i + length] || total < best[i + length].cost) {
-          best[i + length] = { cost: total, parts: best[i].parts.concat([piece]) };
-        }
+        const candidate = {
+          cost: total,
+          count: best[i].count + 1,
+          score: best[i].score + length * length,
+          parts: best[i].parts.concat([piece])
+        };
+
+        if (better(candidate, best[i + length])) best[i + length] = candidate;
       }
     }
 
     return best[n] ? best[n].parts : [token];
   }
 
-  /** OCR 有时会把单词粘在一起，这里按词典补回空格 */
+  /** OCR 常把空格吃掉。只对 6 个字母以上的纯字母段做切分，标点原样保留。 */
   function respace(text) {
     return text
       .split(/\s+/)
       .map(function (token) {
-        const clean = token.replace(/^[^A-Za-z]+|[^A-Za-z]+$/g, '');
-        if (clean.length < 6) return token;
-        if (Dictionary.contains(clean)) return token;
-
-        const parts = splitStuck(clean);
-        if (parts.length < 2) return token;
-
-        const prefix = token.match(/^[^A-Za-z]*/)[0];
-        const suffix = token.match(/[^A-Za-z]*$/)[0];
-        return prefix + parts.join(' ') + suffix;
+        return token.replace(/[A-Za-z]{6,}/g, function (run) {
+          if (Dictionary.contains(run)) return run;
+          const parts = splitStuck(run);
+          return parts.length > 1 ? parts.join(' ') : run;
+        });
       })
       .join(' ');
+  }
+
+  /** OCR 常常把标点前后的空格吃掉（week,will），这里补回来，念起来才顺 */
+  function tidyPunctuation(text) {
+    return text
+      .replace(/\s+([,.;:!?])/g, '$1')
+      .replace(/([,;:!?])(?=[A-Za-z])/g, '$1 ')
+      .replace(/\.(?=[A-Z][a-z])/g, '. ');
+  }
+
+  /** 把 OCR 的行按竖直间距重新拼成段落，连字符断词会接回去 */
+  function buildParagraphs(items) {
+    const lines = ReadingOrder.ordered(items)
+      .map(function (item) {
+        return {
+          text: respace(item.text).trim(),
+          top: item.top,
+          bottom: item.bottom,
+          height: item.height,
+          left: item.left
+        };
+      })
+      .filter(function (line) { return line.text; });
+
+    const paragraphs = [];
+    let current = [];
+    let prev = null;
+
+    const flush = function () {
+      if (current.length) {
+        paragraphs.push(tidyPunctuation(current.join(' ')));
+        current = [];
+      }
+    };
+
+    for (const line of lines) {
+      if (prev) {
+        const gap = line.top - prev.bottom;
+        const limit = Math.max(prev.height || 0.02, line.height || 0.02) * 1.25;
+        // 换栏时 x 会突然跳一大截，这时候必须断段，不然左右两栏会连成一段
+        const columnJump = Math.abs((line.left || 0) - (prev.left || 0)) > 0.15;
+        if (gap > limit || gap < 0 || columnJump) flush();
+      }
+
+      if (current.length && /-$/.test(current[current.length - 1]) && /^[a-z]/.test(line.text)) {
+        current[current.length - 1] = current[current.length - 1].slice(0, -1) + line.text;
+      } else {
+        current.push(line.text);
+      }
+
+      prev = line;
+    }
+    flush();
+
+    return paragraphs;
+  }
+
+  /** 把段落切成句子，记录每段包含哪些句子 */
+  function buildReading(paragraphs) {
+    const sentences = [];
+    const layout = [];
+
+    paragraphs.forEach(function (para) {
+      const parts = SentenceParse.splitSentences(para);
+      const idxs = [];
+      parts.forEach(function (text) {
+        idxs.push(sentences.length);
+        sentences.push({ text: text });
+      });
+      layout.push(idxs);
+    });
+
+    return { sentences: sentences, layout: layout };
   }
 
   async function handleFile(file) {
     if (!file) return;
     state.busy = true;
+    state.overlay = { title: '正在识别', hint: '在本地处理，照片不会上传', progress: 0 };
     state.progress = 0;
     state.progressLabel = '正在识别…';
     state.message = null;
@@ -727,11 +867,16 @@
       });
       window.__lastItems = items;
 
-      // 按阅读顺序拼出全文，给长难句拆解用；顺手把粘在一起的单词补回空格
-      const ordered = ReadingOrder.ordered(items);
-      state.article = ordered.map(function (item) { return respace(item.text); }).join('\n');
+      const paragraphs = buildParagraphs(items);
+      state.paragraphs = paragraphs;
+      state.reading = buildReading(paragraphs);
+
       state.viewMode = 'words';
-      state.expandedSentence = null;
+      state.showTrans = false;
+      state.showGrammar = false;
+      state.transZh = {};
+      state.transPending = {};
+
       const known = candidates.filter(function (w) {
         return Dictionary.isVocabWord(w);
       });
@@ -749,6 +894,7 @@
       state.message = '识别出错了：' + (error && error.message ? error.message : error);
     } finally {
       state.busy = false;
+      state.overlay = null;
       render();
     }
   }
@@ -767,6 +913,67 @@
     }
   }
 
+  // ---------------------------------------------------------------- 翻译
+
+  async function translateMissing() {
+    if (state.translating) return;
+    const sentences = state.reading.sentences;
+    if (!sentences.length) return;
+
+    const todo = sentences
+      .map(function (s, i) { return { i: i, text: s.text }; })
+      .filter(function (item) { return !state.transZh[item.i]; });
+
+    if (!todo.length) return;
+
+    state.translating = true;
+    state.transPending = {};
+    todo.forEach(function (item) { state.transPending[item.i] = true; });
+
+    let first = true;
+    state.overlay = {
+      title: '正在准备翻译',
+      hint: '翻译模型约 107 MB，只需下载一次，之后离线可用',
+      progress: 0
+    };
+    render();
+
+    try {
+      for (const item of todo) {
+        const zh = await Translator.translateOne(item.text, function (p) {
+          if (first && state.overlay) {
+            state.overlay.progress = p.ratio;
+            state.overlay.hint =
+              '正在下载翻译模型 ' +
+              (p.loaded / 1048576).toFixed(0) +
+              ' / ' +
+              (p.total / 1048576).toFixed(0) +
+              ' MB';
+            renderProgress();
+          }
+        });
+
+        if (first) {
+          first = false;
+          state.overlay = null;
+          render();
+        }
+
+        state.transZh[item.i] = zh;
+        delete state.transPending[item.i];
+        render();
+      }
+    } catch (error) {
+      state.showTrans = false;
+      state.message = '翻译失败：' + (error && error.message ? error.message : error);
+    } finally {
+      state.translating = false;
+      state.transPending = {};
+      state.overlay = null;
+      render();
+    }
+  }
+
   // ---------------------------------------------------------------- 渲染
 
   const screen = document.getElementById('screen');
@@ -782,16 +989,17 @@
     return state.words.filter((w) => !Dictionary.isVocabWord(w)).length;
   }
 
+  function starIcon(on) {
+    return on ? ICONS.starFill : ICONS.star;
+  }
+
   function wordRowMarkup(word, index) {
     const entry = Dictionary.lookup(word);
     const starred = isStarred(word);
 
     const tag = entry.tag || '';
-    const inBook =
-      state.wordbook !== 'all' && tag.split(' ').indexOf(state.wordbook) >= 0;
-    const badge = inBook
-      ? ' <span class="badge">' + bookName(state.wordbook) + '</span>'
-      : '';
+    const inBook = state.wordbook !== 'all' && tag.split(' ').indexOf(state.wordbook) >= 0;
+    const badge = inBook ? ' <span class="badge">' + bookName(state.wordbook) + '</span>' : '';
 
     let subline = '<div class="sub empty">词典未收录</div>';
     if (!entry.empty) {
@@ -811,7 +1019,7 @@
           '<div class="word">' + esc(word) + badge + '</div>' +
           subline +
         '</div>' +
-        '<button class="star' + (starred ? ' on' : '') + '" data-star="' + esc(word) + '" aria-label="收藏">★</button>' +
+        '<button class="star' + (starred ? ' on' : '') + '" data-star="' + esc(word) + '" aria-label="收藏">' + starIcon(starred) + '</button>' +
         '<div class="pill">' +
           '<button class="accent-btn' + (active && speakingAccent === 'UK' ? ' active' : '') + '" data-speak="' + esc(word) + '" data-accent="UK">英音</button>' +
           '<span class="divider"></span>' +
@@ -821,69 +1029,155 @@
     );
   }
 
+  function tileMarkup(word) {
+    const entry = Dictionary.lookup(word);
+    const meaning = entry.meaning ? entry.meaning.split(/[；;]/)[0] : '词典未收录';
+    const active = speakingWord === word;
+
+    return (
+      '<button class="tile' + (active ? ' active' : '') + '" data-word="' + esc(word) + '">' +
+        '<div class="tile-word">' + esc(word) + '</div>' +
+        '<div class="tile-ipa">' + (entry.phonetic ? '/' + esc(entry.phonetic) + '/' : '') + '</div>' +
+        '<div class="tile-meaning">' + esc(meaning) + '</div>' +
+      '</button>'
+    );
+  }
+
   function listMarkup(words, withIndex) {
     const rows = words.map((w, i) => wordRowMarkup(w, withIndex ? i : null));
     return '<div class="card">' + rows.join('') + '</div>';
   }
 
-  /** 句子视图：逐句拆解 */
-  function sentencesMarkup() {
-    const sentences = SentenceParse.splitSentences(state.article);
+  function gridMarkup(words) {
+    return '<div class="grid">' + words.map(tileMarkup).join('') + '</div>';
+  }
 
-    if (!sentences.length) {
-      return '<div class="empty-state"><div class="title">这一页没有可切分的句子</div></div>';
+  /** 一句英文 → 可点的单词 span */
+  function sentenceMarkup(text) {
+    let html = '';
+    const re = /([A-Za-z][A-Za-z'’\-]*)/g;
+    let last = 0;
+    let m;
+    while ((m = re.exec(text))) {
+      html += esc(text.slice(last, m.index));
+      html += '<span class="w" data-w="' + esc(m[0]) + '">' + esc(m[0]) + '</span>';
+      last = m.index + m[0].length;
+    }
+    html += esc(text.slice(last));
+    return html;
+  }
+
+  function sentenceSpan(index) {
+    const sentence = state.reading.sentences[index];
+    if (!sentence) return '';
+
+    return (
+      '<span class="sent" data-sent="' + index + '">' +
+        sentenceMarkup(sentence.text) +
+        '<button class="sent-play" data-play-sent="' + index + '" aria-label="朗读这句">' +
+          (speakingSentence === index ? ICONS.stop : ICONS.play) +
+        '</button>' +
+      '</span>'
+    );
+  }
+
+  function grammarChips(index) {
+    const sentence = state.reading.sentences[index];
+    if (!sentence) return '';
+    const analysis = SentenceParse.analyze(sentence.text, Dictionary.lookup);
+    if (!analysis.points.length) return '';
+
+    return (
+      '<div class="g-chips">' +
+        analysis.points
+          .map(function (point) {
+            return (
+              '<button class="g-chip" data-grammar="' + index + '">' + esc(point.name) + '</button>'
+            );
+          })
+          .join('') +
+      '</div>'
+    );
+  }
+
+  function readingMarkup() {
+    const reading = state.reading;
+    if (!reading.sentences.length) {
+      return (
+        '<div class="empty-state">' +
+          '<div class="icon">📖</div>' +
+          '<div class="title">这一页没有切出完整的句子</div>' +
+          '<div class="hint">可能是书页太糊，或者只拍到了单词表。换个角度再拍一张试试。</div>' +
+        '</div>'
+      );
+    }
+
+    const aligned = state.showTrans || state.showGrammar;
+    let inner = '';
+
+    reading.layout.forEach(function (idxs) {
+      if (!idxs.length) return;
+
+      if (!aligned) {
+        inner +=
+          '<div class="passage">' +
+          idxs.map(sentenceSpan).join(' ') +
+          '</div>';
+        return;
+      }
+
+      inner += '<div class="passage">';
+      idxs.forEach(function (i) {
+        inner += '<div class="sent-block">' + sentenceSpan(i);
+
+        if (state.showTrans) {
+          const zh = state.transZh[i];
+          if (zh) inner += '<div class="trans">' + esc(zh) + '</div>';
+          else if (state.transPending[i]) inner += '<div class="trans pending">翻译中…</div>';
+        }
+
+        if (state.showGrammar) inner += grammarChips(i);
+        inner += '</div>';
+      });
+      inner += '</div>';
+    });
+
+    return (
+      '<div class="read-card">' + inner + '</div>' +
+      '<div class="read-hint">点单词查词，点句子听整句，句末小三角单独朗读</div>'
+    );
+  }
+
+  function scanToolbar() {
+    if (state.viewMode === 'reading') {
+      return (
+        '<div class="seg-row">' +
+          '<div class="segmented">' +
+            '<button class="seg" data-mode="words">单词</button>' +
+            '<button class="seg on" data-mode="reading">段落</button>' +
+          '</div>' +
+          '<div class="spacer"></div>' +
+          '<button class="mini-btn' + (state.showTrans ? ' on' : '') + '" data-translate>' +
+            ICONS.translate + '<span>翻译</span>' +
+          '</button>' +
+          '<button class="mini-btn' + (state.showGrammar ? ' on' : '') + '" data-grammar-toggle>' +
+            ICONS.grammar + '<span>语法</span>' +
+          '</button>' +
+        '</div>'
+      );
     }
 
     return (
-      '<div class="list">' +
-      sentences
-        .map(function (sentence, index) {
-          const analysis = SentenceParse.analyze(sentence, Dictionary.lookup);
-          const expanded = state.expandedSentence === index;
-
-          const chips = analysis.points
-            .map(function (point) {
-              return '<span class="g-chip">' + esc(point.name) + '</span>';
-            })
-            .join('');
-
-          let detail = '';
-          if (expanded) {
-            const structure = analysis.clauses
-              .map(function (clause) {
-                return (
-                  '<div class="clause">' +
-                  '<span class="clause-role">' + esc(clause.role || '主句') + '</span>' +
-                  '<span class="clause-text">' + esc(clause.text) + '</span>' +
-                  '</div>'
-                );
-              })
-              .join('');
-
-            const notes = analysis.points
-              .map(function (point) {
-                return '<div class="grammar-note">· ' + esc(point.note) + '</div>';
-              })
-              .join('');
-
-            detail =
-              '<div class="sentence-detail">' +
-              '<div class="detail-title">结构</div>' +
-              structure +
-              (notes ? '<div class="detail-title">语法点</div>' + notes : '') +
-              '<div class="web-note">网页版暂不支持翻译：浏览器不允许网页调用 http 接口</div>' +
-              '</div>';
-          }
-
-          return (
-            '<div class="sentence-card' + (expanded ? ' open' : '') + '" data-sentence="' + index + '">' +
-            '<div class="sentence-text">' + esc(sentence) + '</div>' +
-            (chips ? '<div class="g-chips">' + chips + '</div>' : '') +
-            detail +
-            '</div>'
-          );
-        })
-        .join('') +
+      '<div class="seg-row">' +
+        '<div class="segmented">' +
+          '<button class="seg on" data-mode="words">单词</button>' +
+          '<button class="seg" data-mode="reading">段落</button>' +
+        '</div>' +
+        '<div class="spacer"></div>' +
+        '<button class="mini-btn" data-layout>' +
+          (state.layout === 'list' ? ICONS.grid : ICONS.list) +
+          '<span>' + (state.layout === 'list' ? '横排' : '竖排') + '</span>' +
+        '</button>' +
       '</div>'
     );
   }
@@ -904,7 +1198,7 @@
         '<div class="empty-state">' +
           '<div class="spinner"></div>' +
           '<div class="title">正在加载词典…</div>' +
-          '<div class="hint">首次大约 3.5 MB，加载完就存在手机里，以后不用再等</div>' +
+          '<div class="hint">首次大约 8 MB，加载完就存在手机里，以后不用再等</div>' +
         '</div>'
       );
     }
@@ -916,48 +1210,57 @@
     if (state.words.length && hidden > 0) {
       notice =
         '<button class="notice" data-toggle-all>' +
-        (state.showAll ? '正在显示全部，含 ' + hidden + ' 个词典未收录的'
-                       : '已隐藏 ' + hidden + ' 个词典未收录的词') +
+        (state.showAll
+          ? '正在显示全部，含 ' + hidden + ' 个词典未收录的'
+          : '已隐藏 ' + hidden + ' 个词典未收录的词') +
         '</button>';
     }
 
-    let body;
-    if (!words.length) {
+    let body = '';
+
+    if (state.words.length || state.reading.sentences.length) {
+      body += scanToolbar();
+
+      if (state.viewMode === 'reading') {
+        body +=
+          '<div class="list" style="padding:0">' + readingMarkup() + '</div>' +
+          '<div class="footer">' +
+            '<button class="wide" data-read-all>' +
+              (speakingAll ? ICONS.stop + '停止' : ICONS.speaker + '朗读全文') +
+            '</button>' +
+            '<button class="square" data-clear aria-label="清空">' + ICONS.trash + '</button>' +
+          '</div>';
+      } else {
+        body +=
+          (state.layout === 'grid' ? gridMarkup(words) : '<div class="list">' + listMarkup(words, true) + '</div>') +
+          '<div class="footer">' +
+            '<button class="wide" data-speak-all>' +
+              (speakingAll ? ICONS.stop + '停止' : ICONS.speaker + '全部朗读') +
+            '</button>' +
+            '<button class="square" data-clear aria-label="清空">' + ICONS.trash + '</button>' +
+          '</div>';
+      }
+    } else {
       body =
         '<div class="empty-state">' +
           '<div class="icon">📄</div>' +
-          '<div class="title">拍下书页，英文单词会按顺序列出</div>' +
-          '<div class="hint">点单词听发音，点「英音/美音」选口音，长按看完整释义</div>' +
+          '<div class="title">拍下书页，单词和段落都给你理好</div>' +
+          '<div class="hint">单词视图点一下就念；段落视图可以逐句听、整段听、离线翻译</div>' +
         '</div>';
-    } else {
-      const chips =
-        '<div class="mode-row">' +
-          '<button class="mode-chip' + (state.viewMode === 'words' ? ' on' : '') + '" data-mode="words">单词</button>' +
-          '<button class="mode-chip' + (state.viewMode === 'sentences' ? ' on' : '') + '" data-mode="sentences">句子</button>' +
-        '</div>';
-
-      if (state.viewMode === 'sentences') {
-        body = chips + sentencesMarkup();
-      } else {
-        body =
-          chips +
-          '<div class="list">' + listMarkup(words, true) + '</div>' +
-          '<div class="footer">' +
-            '<button class="wide" data-speak-all>' + (speakingAll ? '■ 停止' : '▶ 全部朗读') + '</button>' +
-            '<button class="square" data-clear>🗑</button>' +
-          '</div>';
-      }
     }
 
     return (
       '<header class="head">' +
         '<h1>单词视界</h1>' +
-        '<p>拍一页，点一下就念给你听</p>' +
-        '<button class="about-btn" data-about>ⓘ</button>' +
+        '<p>拍一页，读懂一整页</p>' +
+        '<div class="head-actions">' +
+          '<button class="icon-btn" data-theme-toggle>' + (resolvedTheme() === 'dark' ? ICONS.sun : ICONS.moon) + '</button>' +
+          '<button class="icon-btn" data-about>' + ICONS.info + '</button>' +
+        '</div>' +
       '</header>' +
       '<div class="actions">' +
-        '<label class="big-btn">拍照<input type="file" accept="image/*" capture="environment" data-input hidden></label>' +
-        '<label class="big-btn">相册<input type="file" accept="image/*" data-input hidden></label>' +
+        '<label class="big-btn primary">' + ICONS.camera + '拍照<input type="file" accept="image/*" capture="environment" data-input hidden></label>' +
+        '<label class="big-btn">' + ICONS.image + '相册<input type="file" accept="image/*" data-input hidden></label>' +
       '</div>' +
       notice +
       (state.message ? '<div class="message">' + esc(state.message) + '</div>' : '') +
@@ -989,7 +1292,9 @@
     html += '</div>';
     html +=
       '<div class="footer">' +
-        '<button class="wide" data-speak-all>' + (speakingAll ? '■ 停止' : '▶ 全部朗读') + '</button>' +
+        '<button class="wide" data-speak-all>' +
+          (speakingAll ? ICONS.stop + '停止' : ICONS.speaker + '全部朗读') +
+        '</button>' +
       '</div>';
 
     return html;
@@ -1032,12 +1337,14 @@
 
     return (
       '<header class="head detail-head">' +
-        '<button class="back" data-back>‹</button>' +
+        '<button class="back" data-back aria-label="返回">' + ICONS.chevron + '</button>' +
         '<h1 class="small">' + dayLabel(entry.scannedAt) + ' ' + timeLabel(entry.scannedAt) + '</h1>' +
       '</header>' +
       '<div class="list">' + listMarkup(words, true) + '</div>' +
       '<div class="footer">' +
-        '<button class="wide" data-speak-all>' + (speakingAll ? '■ 停止' : '▶ 全部朗读') + '</button>' +
+        '<button class="wide" data-speak-all>' +
+          (speakingAll ? ICONS.stop + '停止' : ICONS.speaker + '全部朗读') +
+        '</button>' +
       '</div>'
     );
   }
@@ -1085,9 +1392,7 @@
         html +=
           '<button class="book-row' + (state.wordbook === book.code ? ' on' : '') + '" data-book="' + book.code + '">' +
             '<span class="book-name">' + book.name + '</span>' +
-            '<span class="book-count">' + count + ' 词' +
-              (starred ? ' · 已收藏 ' + starred : '') +
-            '</span>' +
+            '<span class="book-count">' + count + ' 词' + (starred ? ' · 已收藏 ' + starred : '') + '</span>' +
           '</button>';
       });
 
@@ -1100,24 +1405,33 @@
 
   function tabsMarkup() {
     const tabs = [
-      ['scan', '扫描'],
-      ['library', '词库'],
-      ['starred', '生词本'],
-      ['history', '历史']
+      ['scan', '扫描', ICONS.scan],
+      ['library', '词库', ICONS.book],
+      ['starred', '生词本', ICONS.star],
+      ['history', '历史', ICONS.clock]
     ];
     return tabs
-      .map(
-        ([key, label]) =>
-          '<button class="tab' + (state.tab === key ? ' active' : '') + '" data-tab="' + key + '">' + label + '</button>'
-      )
+      .map(function (item) {
+        const key = item[0];
+        return (
+          '<button class="tab' + (state.tab === key ? ' active' : '') + '" data-tab="' + key + '">' +
+            item[2] + '<span>' + item[1] + '</span>' +
+          '</button>'
+        );
+      })
       .join('');
   }
 
   function renderProgress() {
     const bar = document.querySelector('.progress-fill');
-    if (bar) bar.style.width = Math.round(state.progress * 100) + '%';
+    if (bar) {
+      const value = state.overlay && typeof state.overlay.progress === 'number'
+        ? state.overlay.progress
+        : state.progress;
+      bar.style.width = Math.round(value * 100) + '%';
+    }
     const label = document.querySelector('.progress-label');
-    if (label) label.textContent = state.progressLabel || '正在识别…';
+    if (label) label.textContent = state.overlay ? state.overlay.hint : state.progressLabel || '正在识别…';
   }
 
   function render() {
@@ -1131,27 +1445,44 @@
     screen.innerHTML = html;
     document.getElementById('tabs').innerHTML = tabsMarkup();
 
-    if (state.busy) {
+    renderOverlay();
+  }
+
+  function renderOverlay() {
+    if (state.overlay) {
       overlay.hidden = false;
+      const progress = typeof state.overlay.progress === 'number' ? state.overlay.progress : 0;
       overlay.innerHTML =
         '<div class="modal-backdrop"></div>' +
         '<div class="loading">' +
           '<div class="spinner"></div>' +
-          '<div class="progress-label">' + esc(state.progressLabel || '正在识别…') + '</div>' +
-          '<div class="progress"><div class="progress-fill" style="width:' + Math.round(state.progress * 100) + '%"></div></div>' +
+          '<div class="loading-title">' + esc(state.overlay.title || '处理中') + '</div>' +
+          '<div class="progress-label">' + esc(state.overlay.hint || '') + '</div>' +
+          '<div class="progress"><div class="progress-fill" style="width:' + Math.round(progress * 100) + '%"></div></div>' +
         '</div>';
-    } else if (state.detail) {
+      return;
+    }
+
+    if (state.detail) {
       overlay.hidden = false;
       overlay.innerHTML = detailMarkup(state.detail);
-    } else {
-      overlay.hidden = true;
-      overlay.innerHTML = '';
+      return;
     }
+
+    if (state.grammar != null) {
+      overlay.hidden = false;
+      overlay.innerHTML = grammarMarkup(state.grammar);
+      return;
+    }
+
+    overlay.hidden = true;
+    overlay.innerHTML = '';
   }
 
   function detailMarkup(word) {
     const entry = Dictionary.lookup(word);
     const active = speakingWord === word;
+    const starred = isStarred(word);
 
     let body = '';
     if (entry.empty) {
@@ -1178,14 +1509,52 @@
         '<div class="sheet-head">' +
           '<div class="detail-word">' + esc(word) + '</div>' +
           (entry.phonetic ? '<div class="detail-ipa">/' + esc(entry.phonetic) + '/</div>' : '') +
-          (entry.lemma ? '<div class="detail-lemma">是 ' + esc(entry.lemma) + ' 的变形，释义和音标借用原形</div>' : '') +
+          (entry.lemma ? '<div class="detail-lemma">是 ' + esc(entry.lemma) + ' 的变形，释义借用原形</div>' : '') +
           '<div class="detail-actions">' +
-            '<button class="chip-btn' + (active && speakingAccent === 'UK' ? ' active' : '') + '" data-speak="' + esc(word) + '" data-accent="UK">🔊 英音</button>' +
-            '<button class="chip-btn' + (active && speakingAccent === 'US' ? ' active' : '') + '" data-speak="' + esc(word) + '" data-accent="US">🔊 美音</button>' +
-            '<button class="chip-btn' + (isStarred(word) ? ' starred' : '') + '" data-star="' + esc(word) + '">★</button>' +
+            '<button class="chip-btn' + (active && speakingAccent === 'UK' ? ' active' : '') + '" data-speak="' + esc(word) + '" data-accent="UK">' + ICONS.speaker + '英音</button>' +
+            '<button class="chip-btn' + (active && speakingAccent === 'US' ? ' active' : '') + '" data-speak="' + esc(word) + '" data-accent="US">' + ICONS.speaker + '美音</button>' +
+            '<button class="chip-btn' + (starred ? ' starred' : '') + '" data-star="' + esc(word) + '">' + starIcon(starred) + '</button>' +
           '</div>' +
         '</div>' +
         body +
+        '<button class="close-detail" data-close-detail>关闭</button>' +
+      '</div>'
+    );
+  }
+
+  function grammarMarkup(index) {
+    const sentence = state.reading.sentences[index];
+    if (!sentence) return '';
+
+    const analysis = SentenceParse.analyze(sentence.text, Dictionary.lookup);
+
+    const structure = analysis.clauses
+      .map(function (clause) {
+        return (
+          '<div class="clause">' +
+            '<span class="clause-role">' + esc(clause.role || '主句') + '</span>' +
+            '<span class="clause-text">' + esc(clause.text) + '</span>' +
+          '</div>'
+        );
+      })
+      .join('');
+
+    const notes = analysis.points
+      .map(function (point) {
+        return '<div class="grammar-note"><b>' + esc(point.name) + '</b> · ' + esc(point.note) + '</div>';
+      })
+      .join('');
+
+    return (
+      '<div class="modal-backdrop" data-close-detail></div>' +
+      '<div class="sheet">' +
+        '<div class="sheet-head">' +
+          '<div class="detail-word" style="font-size:19px;line-height:1.5">' +
+            sentenceMarkup(sentence.text) +
+          '</div>' +
+        '</div>' +
+        '<div class="detail-section"><div class="detail-title">结构</div>' + structure + '</div>' +
+        (notes ? '<div class="detail-section"><div class="detail-title">语法点</div>' + notes + '</div>' : '') +
         '<button class="close-detail" data-close-detail>关闭</button>' +
       '</div>'
     );
@@ -1206,7 +1575,7 @@
   let longPressed = false;
 
   document.addEventListener('pointerdown', function (event) {
-    const row = event.target.closest('.row');
+    const row = event.target.closest('.row, .tile');
     if (!row || event.target.closest('button')) return;
     longPressed = false;
     const word = row.dataset.word;
@@ -1243,6 +1612,47 @@
       return;
     }
 
+    const playSent = target.closest('[data-play-sent]');
+    if (playSent) {
+      event.stopPropagation();
+      const index = parseInt(playSent.dataset.playSent, 10);
+      if (speakingSentence === index && window.speechSynthesis && speechSynthesis.speaking) {
+        stopSpeaking();
+      } else {
+        speakingSentence = index;
+        speakText(state.reading.sentences[index].text, null, 0.92);
+      }
+      render();
+      return;
+    }
+
+    // 段落里的单词 → 查词
+    const wordSpan = target.closest('.w');
+    if (wordSpan) {
+      event.stopPropagation();
+      state.detail = wordSpan.dataset.w;
+      render();
+      return;
+    }
+
+    // 点句子其他位置 → 念这一句
+    const sent = target.closest('[data-sent]');
+    if (sent) {
+      const index = parseInt(sent.dataset.sent, 10);
+      speakingSentence = index;
+      speakText(state.reading.sentences[index].text, null, 0.92);
+      render();
+      return;
+    }
+
+    const grammarChip = target.closest('[data-grammar]');
+    if (grammarChip) {
+      event.stopPropagation();
+      state.grammar = parseInt(grammarChip.dataset.grammar, 10);
+      render();
+      return;
+    }
+
     if (target.closest('[data-speak-all]')) {
       const words = state.historyDetail
         ? usefulWords(state.historyDetail)
@@ -1253,9 +1663,49 @@
       return;
     }
 
+    if (target.closest('[data-read-all]')) {
+      speakArticle();
+      return;
+    }
+
+    if (target.closest('[data-translate]')) {
+      if (state.showTrans) {
+        state.showTrans = false;
+        render();
+      } else {
+        state.showTrans = true;
+        render();
+        translateMissing();
+      }
+      return;
+    }
+
+    if (target.closest('[data-grammar-toggle]')) {
+      state.showGrammar = !state.showGrammar;
+      render();
+      return;
+    }
+
+    if (target.closest('[data-layout]')) {
+      state.layout = state.layout === 'list' ? 'grid' : 'list';
+      try {
+        localStorage.setItem('vl.layout', state.layout);
+      } catch (e) { /* 存不下就算了 */ }
+      render();
+      return;
+    }
+
+    if (target.closest('[data-theme-toggle]')) {
+      toggleTheme();
+      return;
+    }
+
     if (target.closest('[data-clear]')) {
       stopSpeaking();
       state.words = [];
+      state.paragraphs = [];
+      state.reading = { sentences: [], layout: [] };
+      state.transZh = {};
       state.message = null;
       render();
       return;
@@ -1270,15 +1720,6 @@
     const modeBtn = target.closest('[data-mode]');
     if (modeBtn) {
       state.viewMode = modeBtn.dataset.mode;
-      state.expandedSentence = null;
-      render();
-      return;
-    }
-
-    const sentenceCard = target.closest('[data-sentence]');
-    if (sentenceCard) {
-      const index = parseInt(sentenceCard.dataset.sentence, 10);
-      state.expandedSentence = state.expandedSentence === index ? null : index;
       render();
       return;
     }
@@ -1322,6 +1763,7 @@
 
     if (target.closest('[data-close-detail]')) {
       state.detail = null;
+      state.grammar = null;
       render();
       return;
     }
@@ -1332,12 +1774,11 @@
     }
 
     if (target.closest('[data-about]')) {
-      state.detail = null;
       showAbout();
       return;
     }
 
-    const row = target.closest('.row');
+    const row = target.closest('.row, .tile');
     if (row) {
       if (longPressed) {
         longPressed = false;
@@ -1356,14 +1797,17 @@
   });
 
   function showAbout() {
+    state.detail = null;
+    state.grammar = null;
     overlay.hidden = false;
     overlay.innerHTML =
       '<div class="modal-backdrop" data-close-detail></div>' +
       '<div class="sheet">' +
         '<div class="sheet-head"><div class="detail-word">关于</div>' +
-        '<div class="detail-lemma">单词视界 · 网页版 1.0</div></div>' +
-        section('隐私', '不联网做识别。照片只在这台设备的浏览器里处理，不上传。\n生词本和历史存在本机浏览器里。') +
-        section('识别', '用 Tesseract.js 在浏览器里本地识别。比原生 App 慢，准确率也低一些，好处是不用安装、不用审核。') +
+        '<div class="detail-lemma">单词视界 · 网页版 1.1</div></div>' +
+        section('隐私', '识别和翻译都在这台设备上完成，照片和文字都不上传。\n生词本和历史存在本机浏览器里。') +
+        section('识别', '用 PaddleOCR PP-OCRv4 在浏览器里本地识别，首次需要下载约 39 MB 的模型。') +
+        section('翻译', '离线 OPUS-MT 英译中模型，约 107 MB，第一次点「翻译」时才下载，之后不联网也能用。') +
         section('词典', '53513 词条，来自开源项目 ECDICT（MIT 许可证）。') +
         '<button class="close-detail" data-close-detail>关闭</button>' +
       '</div>';
@@ -1383,6 +1827,7 @@
   }
 
   window.addEventListener('load', async function () {
+    applyTheme();
     render();
     await loadDictionary();
 
@@ -1391,11 +1836,22 @@
     }
   });
 
+  if (window.matchMedia) {
+    const media = window.matchMedia('(prefers-color-scheme: dark)');
+    const onChange = function () {
+      if (state.theme === 'auto') {
+        applyTheme();
+        render();
+      }
+    };
+    if (media.addEventListener) media.addEventListener('change', onChange);
+  }
+
   if (window.speechSynthesis) {
     speechSynthesis.onvoiceschanged = function () {};
   }
 
-  // ---------------------------------------------------------------- 自检（只在地址栏带 #selftest 时跑）
+  // ---------------------------------------------------------------- 自检
 
   if (location.hash === '#selftest') {
     window.addEventListener('load', function () {

@@ -1,13 +1,13 @@
 {
   "name": "单词视界",
   "short_name": "单词视界",
-  "description": "拍一页书，把英文单词按顺序列出来，点一下就念给你听。",
+  "description": "拍一页书，单词和段落都给你理好：点词发音、逐句朗读、离线翻译、语法拆解。",
   "start_url": "./index.html",
   "scope": "./",
   "display": "standalone",
   "orientation": "portrait",
-  "background_color": "#12141c",
-  "theme_color": "#12141c",
+  "background_color": "#f6f1e7",
+  "theme_color": "#f6f1e7",
   "lang": "zh-CN",
   "icons": [
     {
