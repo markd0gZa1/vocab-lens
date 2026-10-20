@@ -18,7 +18,10 @@
   --tab-bg: rgba(255, 253, 247, 0.94);
   --sheet-bg: #fffdf7;
   --shadow: 0 1px 2px rgba(70, 50, 20, 0.05), 0 10px 26px rgba(70, 50, 20, 0.07);
-  --radius: 18px;
+  --radius: 20px;
+  --cat-fill: #f7dfc0;
+  --cat-line: #8a6a45;
+  --cat-bg: #fffdf7;
   --reading-font: Georgia, "Iowan Old Style", "Times New Roman", "Songti SC", serif;
 }
 
@@ -39,6 +42,9 @@
   --tab-bg: rgba(20, 22, 27, 0.94);
   --sheet-bg: #1b1f27;
   --shadow: 0 1px 2px rgba(0, 0, 0, 0.3), 0 12px 30px rgba(0, 0, 0, 0.28);
+  --cat-fill: #3b3444;
+  --cat-line: #e9c9a2;
+  --cat-bg: #1d212a;
 }
 
 * {
@@ -53,8 +59,8 @@ body {
   height: 100%;
   background: var(--bg);
   color: var(--text);
-  font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Hiragino Sans GB",
-    "Microsoft YaHei", "Helvetica Neue", Arial, sans-serif;
+  font-family: ui-rounded, "SF Pro Rounded", -apple-system, BlinkMacSystemFont, "PingFang SC",
+    "Hiragino Sans GB", "Microsoft YaHei", "Helvetica Neue", Arial, sans-serif;
   overscroll-behavior-y: none;
   transition: background-color 0.25s, color 0.25s;
 }
@@ -357,6 +363,7 @@ svg {
 .card {
   border-radius: var(--radius);
   background: var(--card);
+  border: 1px solid var(--line);
   box-shadow: var(--shadow);
   overflow: hidden;
 }
@@ -1167,4 +1174,102 @@ svg {
     animation: none !important;
     transition: none !important;
   }
+}
+
+
+/* ---------------- 小猫 ---------------- */
+
+.cat {
+  width: 120px;
+  height: 120px;
+  display: block;
+  overflow: visible;
+}
+
+.cat-tail {
+  transform-origin: 92px 96px;
+  animation: cat-tail 3.2s ease-in-out infinite;
+}
+
+@keyframes cat-tail {
+  0%, 100% { transform: rotate(0deg); }
+  50% { transform: rotate(-14deg); }
+}
+
+.cat-eyes {
+  transform-origin: 60px 58px;
+  animation: cat-blink 6s infinite;
+}
+
+@keyframes cat-blink {
+  0%, 92%, 100% { transform: scaleY(1); }
+  94%, 97% { transform: scaleY(0.1); }
+}
+
+.cat-scan .cat-prop {
+  animation: cat-bob 1.6s ease-in-out infinite;
+  transform-origin: 90px 88px;
+}
+
+@keyframes cat-bob {
+  0%, 100% { transform: translate(0, 0); }
+  50% { transform: translate(-3px, -3px); }
+}
+
+.cat-think .cat-dots circle {
+  animation: cat-dot 1.4s ease-in-out infinite;
+}
+
+.cat-think .cat-dots circle:nth-child(2) { animation-delay: 0.2s; }
+.cat-think .cat-dots circle:nth-child(3) { animation-delay: 0.4s; }
+
+@keyframes cat-dot {
+  0%, 100% { opacity: 0.35; }
+  50% { opacity: 1; }
+}
+
+.cat-empty .cat {
+  width: 150px;
+  height: 150px;
+  margin-bottom: 4px;
+}
+
+/* 结果区顶部：猫 + 数量 */
+.cat-status {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 20px 2px;
+}
+
+.cat-status .cat {
+  width: 44px;
+  height: 44px;
+  flex: none;
+}
+
+.cat-status-text {
+  font-size: 13px;
+  color: var(--text-2);
+  line-height: 1.45;
+}
+
+.cat-status-text b {
+  color: var(--accent);
+  font-size: 15px;
+  font-weight: 700;
+  margin: 0 1px;
+}
+
+.cat-status-text span {
+  display: block;
+  font-size: 11.5px;
+  color: var(--text-3);
+  margin-top: 1px;
+}
+
+.cat-loading {
+  width: 96px;
+  height: 96px;
+  margin-bottom: -4px;
 }

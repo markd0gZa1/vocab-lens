@@ -85,6 +85,7 @@
 
   // 调试/自检用，正式界面不依赖它
   window.__vl = state;
+  window.__vlRender = render;
 
   const store = {
     starred: loadJSON('vl.starred', []),
@@ -106,8 +107,8 @@
   const ICONS = {
     scan: '<svg viewBox="0 0 24 24" ' + S + '><path d="M4 8.5V6a2 2 0 0 1 2-2h2.5M15.5 4H18a2 2 0 0 1 2 2v2.5M20 15.5V18a2 2 0 0 1-2 2h-2.5M8.5 20H6a2 2 0 0 1-2-2v-2.5"/><path d="M8 12h8"/></svg>',
     book: '<svg viewBox="0 0 24 24" ' + S + '><path d="M4 19.2A2.8 2.8 0 0 1 6.8 16.4H20"/><path d="M6.8 2.2H20v19.6H6.8A2.8 2.8 0 0 1 4 19V5A2.8 2.8 0 0 1 6.8 2.2z"/></svg>',
-    star: '<svg viewBox="0 0 24 24" ' + S + '><path d="m12 3.2 2.7 5.5 6 .9-4.3 4.2 1 6-5.4-2.8-5.4 2.8 1-6L3.3 9.6l6-.9z"/></svg>',
-    starFill: '<svg viewBox="0 0 24 24" fill="currentColor"><path d="m12 3.2 2.7 5.5 6 .9-4.3 4.2 1 6-5.4-2.8-5.4 2.8 1-6L3.3 9.6l6-.9z"/></svg>',
+    star: '<svg viewBox="0 0 24 24" ' + S + '><ellipse cx="6.6" cy="10.4" rx="2" ry="2.6"/><ellipse cx="11" cy="7.6" rx="2" ry="2.8"/><ellipse cx="15.8" cy="7.8" rx="2" ry="2.8"/><ellipse cx="19.6" cy="11" rx="1.9" ry="2.5"/><path d="M13 13.2c3 0 5.2 2 5.2 4.2 0 1.9-1.7 3-3.5 3-.9 0-1.4-.4-1.7-.4s-.8.4-1.7.4c-1.8 0-3.5-1.1-3.5-3 0-2.2 2.2-4.2 5.2-4.2z"/></svg>',
+    starFill: '<svg viewBox="0 0 24 24" fill="currentColor"><ellipse cx="6.6" cy="10.4" rx="2" ry="2.6"/><ellipse cx="11" cy="7.6" rx="2" ry="2.8"/><ellipse cx="15.8" cy="7.8" rx="2" ry="2.8"/><ellipse cx="19.6" cy="11" rx="1.9" ry="2.5"/><path d="M13 13.2c3 0 5.2 2 5.2 4.2 0 1.9-1.7 3-3.5 3-.9 0-1.4-.4-1.7-.4s-.8.4-1.7.4c-1.8 0-3.5-1.1-3.5-3 0-2.2 2.2-4.2 5.2-4.2z"/></svg>',
     clock: '<svg viewBox="0 0 24 24" ' + S + '><circle cx="12" cy="12" r="8.6"/><path d="M12 7.2V12l3.1 1.9"/></svg>',
     camera: '<svg viewBox="0 0 24 24" ' + S + '><path d="M3 8.6A2.6 2.6 0 0 1 5.6 6h1.5l1-1.6A1.5 1.5 0 0 1 9.4 3.6h5.2a1.5 1.5 0 0 1 1.3.8l1 1.6h1.5A2.6 2.6 0 0 1 21 8.6v8.8A2.6 2.6 0 0 1 18.4 20H5.6A2.6 2.6 0 0 1 3 17.4z"/><circle cx="12" cy="12.8" r="3.5"/></svg>',
     image: '<svg viewBox="0 0 24 24" ' + S + '><rect x="3" y="4.2" width="18" height="15.6" rx="2.6"/><circle cx="8.6" cy="9.6" r="1.5"/><path d="m4 17 4.7-4.6a1.6 1.6 0 0 1 2.2 0L15 16.6"/><path d="m14 14 1.9-1.8a1.6 1.6 0 0 1 2.2 0L20.4 14"/></svg>',
@@ -124,6 +125,61 @@
     grammar: '<svg viewBox="0 0 24 24" ' + S + '><path d="M4 6.5h7M4 11.5h10M4 16.5h5"/><path d="m15.4 14.4 1.9 1.9 3.5-3.9"/></svg>',
     chevron: '<svg viewBox="0 0 24 24" ' + S + '><path d="m14.5 6.5-5.5 5.5 5.5 5.5"/></svg>'
   };
+
+
+  // ---------------------------------------------------------------- 小猫
+
+  /** 状态猫：idle 待机 / scan 识别中 / think 翻译中 / happy 完成 / sad 出错 */
+  function catSvg(state, extraClass) {
+    const eyes = {
+      idle:
+        '<circle cx="44" cy="58" r="4.6"/><circle cx="76" cy="58" r="4.6"/>' +
+        '<circle cx="45.4" cy="56.4" r="1.5" fill="var(--cat-bg)"/>' +
+        '<circle cx="77.4" cy="56.4" r="1.5" fill="var(--cat-bg)"/>',
+      scan:
+        '<ellipse cx="44" cy="58" rx="4.6" ry="5.4"/><ellipse cx="76" cy="58" rx="4.6" ry="5.4"/>' +
+        '<circle cx="46" cy="56" r="1.5" fill="var(--cat-bg)"/>' +
+        '<circle cx="78" cy="56" r="1.5" fill="var(--cat-bg)"/>',
+      think:
+        '<path d="M38 59 q6 -7 12 0" fill="none"/><path d="M70 59 q6 -7 12 0" fill="none"/>',
+      happy:
+        '<path d="M38 60 q6 -8 12 0" fill="none"/><path d="M70 60 q6 -8 12 0" fill="none"/>',
+      sad:
+        '<path d="M39 54 l10 10 M49 54 l-10 10" fill="none"/>' +
+        '<path d="M71 54 l10 10 M81 54 l-10 10" fill="none"/>'
+    };
+
+    const mouth =
+      state === 'happy'
+        ? '<path d="M54 70 q6 7 12 0" fill="none"/>'
+        : state === 'sad'
+          ? '<path d="M55 74 q5 -5 10 0" fill="none"/>'
+          : '<path d="M60 68 q-5 6 -9 1 M60 68 q5 6 9 1" fill="none"/>';
+
+    const extras =
+      state === 'scan'
+        ? '<g class="cat-prop"><circle cx="88" cy="86" r="12"/><path d="M97 95 l9 9"/></g>'
+        : state === 'think'
+          ? '<g class="cat-prop cat-dots"><circle cx="44" cy="18" r="3.4"/><circle cx="56" cy="11" r="4.4"/><circle cx="70" cy="6" r="5.6"/></g>'
+          : '';
+
+    return (
+      '<svg class="cat cat-' + state + (extraClass ? ' ' + extraClass : '') + '" viewBox="0 0 120 120" fill="none" stroke="var(--cat-line)" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round">' +
+        '<path class="cat-tail" d="M97 90 q25 10 24 -20" />' +
+        '<path d="M24 48 L18 15 L50 30" fill="var(--cat-fill)"/>' +
+        '<path d="M30 40 L27 25 L41 33" stroke-width="2.4" opacity="0.55"/>' +
+        '<path d="M96 48 L102 15 L70 30" fill="var(--cat-fill)"/>' +
+        '<path d="M90 40 L93 25 L79 33" stroke-width="2.4" opacity="0.55"/>' +
+        '<path d="M14 54 C14 33 34 24 60 24 C86 24 106 33 106 54 C106 82 88 98 60 98 C32 98 14 82 14 54 Z" fill="var(--cat-fill)"/>' +
+        '<g class="cat-eyes" stroke="var(--cat-line)" fill="var(--cat-line)" stroke-width="3.4">' + eyes[state] + '</g>' +
+        '<path d="M56 66 L64 66 L60 71 Z" fill="var(--cat-line)" stroke="none"/>' +
+        '<g>' + mouth + '</g>' +
+        '<path d="M10 62 q-6 1 -8 3 M10 70 q-6 2 -8 5" stroke-width="2.4"/>' +
+        '<path d="M110 62 q6 1 8 3 M110 70 q6 2 8 5" stroke-width="2.4"/>' +
+        extras +
+      '</svg>'
+    );
+  }
 
   // ---------------------------------------------------------------- 主题
 
@@ -901,7 +957,7 @@
   async function handleFile(file) {
     if (!file) return;
     state.busy = true;
-    state.overlay = { title: '正在识别', hint: '在本地处理，照片不会上传', progress: 0 };
+    state.overlay = { title: '正在识别', hint: '在本地处理，照片不会上传', progress: 0, cat: 'scan' };
     state.progress = 0;
     state.progressLabel = '正在识别…';
     state.message = null;
@@ -1073,7 +1129,8 @@
     state.overlay = {
       title: '正在准备翻译',
       hint: '翻译模型约 107 MB，只需下载一次，之后离线可用',
-      progress: 0
+      progress: 0,
+      cat: 'think'
     };
     render();
 
@@ -1364,6 +1421,16 @@
     let body = '';
 
     if (state.words.length || state.reading.sentences.length) {
+      const wordCount = state.words.length;
+      const paraCount = state.paragraphs.length;
+      body +=
+        '<div class="cat-status">' +
+          catSvg('happy') +
+          '<div class="cat-status-text"><b>' + wordCount + '</b> 个词 · <b>' + paraCount + '</b> 段' +
+            '<span>点词查词，点句听音</span>' +
+          '</div>' +
+        '</div>';
+
       if (state.photo) {
         body +=
           '<button class="photo-card" data-photo aria-label="查看原图">' +
@@ -1395,9 +1462,9 @@
       }
     } else {
       body =
-        '<div class="empty-state">' +
-          '<div class="icon">📄</div>' +
-          '<div class="title">拍下书页，单词和段落都给你理好</div>' +
+        '<div class="empty-state cat-empty">' +
+          catSvg('idle') +
+          '<div class="title">拍下书页，我来帮你理</div>' +
           '<div class="hint">单词视图点一下就念；段落视图可以逐句听、整段听、离线翻译</div>' +
         '</div>';
     }
@@ -1608,7 +1675,7 @@
       overlay.innerHTML =
         '<div class="modal-backdrop"></div>' +
         '<div class="loading">' +
-          '<div class="spinner"></div>' +
+          catSvg(state.overlay.cat || 'scan', 'cat-loading') +
           '<div class="loading-title">' + esc(state.overlay.title || '处理中') + '</div>' +
           '<div class="progress-label">' + esc(state.overlay.hint || '') + '</div>' +
           '<div class="progress"><div class="progress-fill" style="width:' + Math.round(progress * 100) + '%"></div></div>' +
