@@ -1199,9 +1199,15 @@
         }
       }
 
-      const candidates = ReadingOrder.words(items, function (w) {
-        return Dictionary.isVocabWord(w);
-      });
+      // 取词前先把粘连的英文拆开（HowAutomaticDoorMechanismsWork）。
+      // 段落那边本来就会拆，单词表不拆的话整串会当成一个超长词被扔掉。
+      const candidates = ReadingOrder.words(
+        items,
+        function (w) {
+          return Dictionary.isVocabWord(w);
+        },
+        respace
+      );
       window.__lastItems = items;
 
       let paragraphs = buildParagraphs(items);

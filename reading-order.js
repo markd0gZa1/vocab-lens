@@ -84,12 +84,15 @@
     return true;
   }
 
-  function words(items, isKnown) {
+  function words(items, isKnown, fixText) {
     const seen = new Set();
     const out = [];
+    const fix = fixText || function (text) { return text; };
 
     for (const item of ordered(items)) {
-      for (const raw of item.text.split(/\s+/)) {
+      // 只按「不是字母」的字符切开：OCR 常把空格吃掉，
+      // close,they / automatic.(2Automatic 这种粘在一起也要能拆开
+      for (const raw of fix(item.text).split(/[^A-Za-z'’\-]+/)) {
         const token = raw.replace(TRIM_RE, '');
         if (!isCandidate(token, isKnown)) continue;
         const key = token.toLowerCase();
