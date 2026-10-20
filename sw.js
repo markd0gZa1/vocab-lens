@@ -1,4 +1,4 @@
-const CACHE = 'vocab-lens-v17';
+const CACHE = 'vocab-lens-v18';
 // 词典单独放一个缓存，不随版本更新被清掉
 const DICT_CACHE = 'vocab-lens-dict';
 // 识别引擎、ORT 这些几十 MB 的静态文件也单独放，

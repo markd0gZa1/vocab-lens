@@ -503,8 +503,21 @@
     'vendor/ocr/v5/dict_space.txt'
   ];
 
+  let assetsPromise = null;
+
   async function prefetchAssets() {
     if (assetsReady) return;
+    // 预取和拍照会同时触发；共用一个 Promise，避免同一批文件被下载两遍
+    if (assetsPromise) return assetsPromise;
+    assetsPromise = doPrefetchAssets();
+    try {
+      await assetsPromise;
+    } finally {
+      assetsPromise = null;
+    }
+  }
+
+  async function doPrefetchAssets() {
 
     const sizes = await Promise.all(
       PADDLE_ASSETS.map(async function (url) {
