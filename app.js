@@ -498,9 +498,9 @@
     'vendor/guten-ocr.js',
     'vendor/ort/ort-wasm-simd-threaded.wasm',
     'vendor/ort/ort-wasm-simd-threaded.mjs',
-    'vendor/ocr/ch_PP-OCRv4_det_infer.onnx',
-    'vendor/ocr/ch_PP-OCRv4_rec_infer.onnx',
-    'vendor/ocr/ppocr_keys_v1.txt'
+    'vendor/ocr/v5/det.onnx',
+    'vendor/ocr/v5/rec.onnx',
+    'vendor/ocr/v5/dict_space.txt'
   ];
 
   async function prefetchAssets() {
@@ -565,9 +565,9 @@
     }
     paddleEngine = await window.GutenOcr.create({
       models: {
-        detectionPath: 'vendor/ocr/ch_PP-OCRv4_det_infer.onnx',
-        recognitionPath: 'vendor/ocr/ch_PP-OCRv4_rec_infer.onnx',
-        dictionaryPath: 'vendor/ocr/ppocr_keys_v1.txt'
+        detectionPath: 'vendor/ocr/v5/det.onnx',
+        recognitionPath: 'vendor/ocr/v5/rec.onnx',
+        dictionaryPath: 'vendor/ocr/v5/dict_space.txt'
       }
     });
     return paddleEngine;
