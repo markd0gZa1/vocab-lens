@@ -537,7 +537,8 @@
 
     let central = null;
     for (const run of runs) {
-      if (run.width < width * 0.015) continue;
+      // 真正的栏间距通常有好几毫米；太窄的多半是行尾参差造成的假缝
+      if (run.width < width * 0.03) continue;
       const distance = Math.abs(run.center - width / 2);
       if (
         !central ||
@@ -602,7 +603,11 @@
       window.__debug.left = leftItems.length;
       window.__debug.right = rightItems.length;
 
-      if (leftItems.length >= 3 && rightItems.length >= 3) {
+      if (
+        leftItems.length >= 3 &&
+        rightItems.length >= 3 &&
+        isRealColumnSplit(leftItems, rightItems, gap / canvas.width)
+      ) {
         return leftItems.concat(rightItems).map(function (item, index) {
           item.id = index;
           return item;
@@ -614,6 +619,22 @@
     const items = await detectOn(canvas, 0, canvas.width);
     window.__debug.whole = items.length;
     return items;
+  }
+
+  /** 切完之后验一下：真的两栏，切口两边各有页边距，不会紧贴着文字 */
+  function isRealColumnSplit(leftItems, rightItems, gapNorm) {
+    const median = function (values) {
+      const sorted = values.slice().sort(function (a, b) { return a - b; });
+      return sorted[Math.floor(sorted.length / 2)];
+    };
+
+    const leftEdge = median(leftItems.map(function (i) { return i.right; }));
+    const rightEdge = median(rightItems.map(function (i) { return i.left; }));
+
+    // 切口紧贴着左边文字、或右边文字贴着切口起笔 → 说明是同一行被切开
+    if (leftEdge > gapNorm - 0.012) return false;
+    if (rightEdge < gapNorm + 0.012) return false;
+    return true;
   }
 
   async function detectOn(sourceCanvas, offset, totalWidth) {
@@ -760,6 +781,19 @@
       })
       .filter(function (line) { return line.text; });
 
+    // 段落的行距和正文行距差不了多少时，按「行高 × 1.25」判断会每行都断段。
+    // 先量出整页的行距中位数，明显大于它才断段。
+    const gaps = [];
+    for (let i = 1; i < lines.length; i++) {
+      const a = lines[i - 1];
+      const b = lines[i];
+      if (Math.abs((b.left || 0) - (a.left || 0)) > 0.15) continue;
+      const gap = b.top - a.bottom;
+      if (gap >= 0) gaps.push(gap);
+    }
+    gaps.sort(function (x, y) { return x - y; });
+    const medianGap = gaps.length ? gaps[Math.floor(gaps.length / 2)] : 0;
+
     const paragraphs = [];
     let current = [];
     let prev = null;
@@ -774,14 +808,26 @@
     for (const line of lines) {
       if (prev) {
         const gap = line.top - prev.bottom;
-        const limit = Math.max(prev.height || 0.02, line.height || 0.02) * 1.25;
+        const height = Math.max(prev.height || 0.02, line.height || 0.02);
+        const limit = Math.max(height * 0.6, medianGap * 1.9);
         // 换栏时 x 会突然跳一大截，这时候必须断段，不然左右两栏会连成一段
         const columnJump = Math.abs((line.left || 0) - (prev.left || 0)) > 0.15;
         if (gap > limit || gap < 0 || columnJump) flush();
       }
 
-      if (current.length && /-$/.test(current[current.length - 1]) && /^[a-z]/.test(line.text)) {
-        current[current.length - 1] = current[current.length - 1].slice(0, -1) + line.text;
+      if (current.length) {
+        const tail = current[current.length - 1];
+        if (/-$/.test(tail) && /^[a-z]/.test(line.text)) {
+          // 行尾连字符：exam- + ple
+          current[current.length - 1] = tail.slice(0, -1) + line.text;
+        } else {
+          const merged = mergeBrokenWord(tail, line.text);
+          if (merged) {
+            current[current.length - 1] = merged;
+          } else {
+            current.push(line.text);
+          }
+        }
       } else {
         current.push(line.text);
       }
@@ -791,6 +837,25 @@
     flush();
 
     return paragraphs;
+  }
+
+  /** 跨行被切断的词：conveni + ence → convenience。只有拼起来是词典里的真词才接。 */
+  function mergeBrokenWord(tail, next) {
+    if (/[.。!?！？,，;；:：]$/.test(tail)) return null;
+
+    const last = tail.match(/([A-Za-z]+)$/);
+    const first = next.match(/^([A-Za-z]+)/);
+    if (!last || !first) return null;
+
+    const left = last[1];
+    const right = first[1];
+    if (left !== left.toLowerCase() || right !== right.toLowerCase()) return null;
+    if (Dictionary.contains(left)) return null;
+
+    const joined = left + right;
+    if (!Dictionary.contains(joined)) return null;
+
+    return tail.slice(0, tail.length - left.length) + joined + next.slice(right.length);
   }
 
   /** 把段落切成句子，记录每段包含哪些句子 */
