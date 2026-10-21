@@ -484,6 +484,7 @@
     psm: query.get('psm') || '11',
     whitelist: query.get('wl') !== '0',
     binarize: query.get('bin') === '1',
+    enhance: query.get('enh') === '1',
     minConfidence: parseInt(query.get('conf') || '0', 10),
     maxSide: parseInt(query.get('side') || '2000', 10),
     minSide: parseInt(query.get('minside') || '1200', 10)
@@ -1120,6 +1121,95 @@
     return out;
   }
 
+
+  /**
+   * 去光照不均 + 轻微对比拉伸。
+   *
+   * 做法：把图缩到 1/8 再模糊一次，得到的就是「这一块纸面有多亮」；
+   * 原图除以它，阴影、反光、背面透印造成的明暗差被抹平，
+   * 淡字和纸的对比反而拉开——2238/2246 那种整页漏检就是被淡墨拖垮的。
+   *
+   * 刻意不做二值化：实测 Otsu 会吃掉书页的细笔画，识别反而更差。
+   */
+  function enhance(canvas) {
+    const context = canvas.getContext('2d');
+    const width = canvas.width;
+    const height = canvas.height;
+    const image = context.getImageData(0, 0, width, height);
+    const data = image.data;
+
+    // 「这一块纸面有多亮」：缩到 1/8 再模糊一次
+    const sw = Math.max(8, Math.round(width / 8));
+    const sh = Math.max(8, Math.round(height / 8));
+    const small = document.createElement('canvas');
+    small.width = sw;
+    small.height = sh;
+    const sctx = small.getContext('2d');
+    sctx.filter = 'blur(3px)';
+    sctx.drawImage(canvas, 0, 0, sw, sh);
+    const bg = sctx.getImageData(0, 0, sw, sh).data;
+
+    // 就一张纸来说，纸面以上不可能更亮；把「纸面」当 1.0，字的相对暗度才看得出来。
+    // 原来直接乘增益没用：淡墨页的纸面本身就 ~200，增益≈1，等于没处理。
+    // 改成伽马：v = 亮度/纸面亮度，out = 255 * v^2.2，笔画的对比被拉开。
+    for (let y = 0; y < height; y++) {
+      const by = Math.min(sh - 1, (y * sh / height) | 0) * sw;
+      for (let x = 0; x < width; x++) {
+        const i = (y * width + x) * 4;
+        const j = (by + Math.min(sw - 1, (x * sw / width) | 0)) * 4;
+
+        const bgLum = Math.max(24, 0.299 * bg[j] + 0.587 * bg[j + 1] + 0.114 * bg[j + 2]);
+        const lum = 0.299 * data[i] + 0.587 * data[i + 1] + 0.114 * data[i + 2];
+        const v = Math.min(1, lum / bgLum);
+        const out = 255 * Math.pow(v, 2.2);
+
+        data[i] = out;
+        data[i + 1] = out;
+        data[i + 2] = out;
+      }
+    }
+
+    context.putImageData(image, 0, 0);
+  }
+
+
+
+  /**
+   * 一次完整的页面识别：det+rec → 量倾斜角 → 歪得明显就摆正再认一遍。
+   * 淡页增强后的重试要走同一套，所以抽成函数。
+   */
+  async function ocrPaddlePage(target) {
+    let items = await recognizeWithPaddle(target);
+    let source = target;
+
+    const skew = medianAngle(items);
+    window.__skew = skew;
+    if (Math.abs(skew) >= 1.5) {
+      state.progressLabel = '正在把照片摆正…';
+      renderProgress();
+      const straightened = rotateCanvas(source, -skew);
+      const second = await recognizeWithPaddle(straightened);
+      if (second.length >= Math.max(3, items.length * 0.8)) {
+        source = straightened;
+        items = second;
+      }
+    }
+
+    return { items: items, source: source };
+  }
+
+  /**
+   * 这次识别实际能拿到多少个词——和界面用的是同一套（拆粘连 + 词典过滤）。
+   * 不能用「字母总数」：失败的页面常常返回一大段重复的垃圾，字母数照样够。
+   */
+  function keptWordCount(items) {
+    return ReadingOrder.words(
+      items,
+      function (w) { return Dictionary.isVocabWord(w); },
+      respace
+    ).length;
+  }
+
   async function handleFile(file) {
     if (!file) return;
     state.busy = true;
@@ -1152,19 +1242,33 @@
       let items;
 
       if (CFG.engine === 'paddle') {
-        items = await recognizeWithPaddle(upright);
+        const first = await ocrPaddlePage(upright);
+        items = first.items;
+        upright = first.source;
 
-        // 先认一遍量出倾斜角；歪得明显就转正再认一遍
-        const skew = medianAngle(items);
-        window.__skew = skew;
-        if (Math.abs(skew) >= 1.5) {
-          state.progressLabel = '正在把照片摆正…';
+        // 认出来的字太少，多半是页面太淡（背面透印、逆光、浅色底）把检测拖垮了。
+        // 这种情况再用「去光照 + 伽马压暗」后的图走一遍完整识别（含摆正），谁的字母多就用谁。
+        // 全量开增强会伤到正常页（实测 2240 从 63% 掉到 0%），所以只在必要时补这一刀。
+        if (!CFG.enhance && keptWordCount(items) < 40) {
+          state.progressLabel = '页面偏淡，换个方式再认一次…';
           renderProgress();
-          const straightened = rotateCanvas(upright, -skew);
-          const second = await recognizeWithPaddle(straightened);
-          if (second.length >= Math.max(3, items.length * 0.8)) {
-            upright = straightened;
-            items = second;
+
+          // 从原图重建：第一遍可能已经把 upright 转过角度了，
+          // 在旋转过的图上再增强，和「一开始就增强」不是同一个输入
+          const boosted = document.createElement('canvas');
+          boosted.width = width;
+          boosted.height = height;
+          boosted.getContext('2d').drawImage(canvas, 0, 0);
+          enhance(boosted);
+
+          const retry = await ocrPaddlePage(boosted);
+          window.__retry = {
+            first: keptWordCount(items),
+            second: keptWordCount(retry.items)
+          };
+          if (keptWordCount(retry.items) > keptWordCount(items)) {
+            items = retry.items;
+            upright = retry.source;
           }
         }
       } else {
