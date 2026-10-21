@@ -485,6 +485,13 @@
     whitelist: query.get('wl') !== '0',
     binarize: query.get('bin') === '1',
     enhance: query.get('enh') === '1',
+    minWords: parseInt(query.get('enhmin') || '40', 10),
+    enhMode: query.get('enhmode') || 'gamma',
+    multi: query.get('multi') === '1',
+    tiles: query.get('tiles') === '1',
+    tileWords: parseInt(query.get('tilewords') || '80', 10),
+    tileCols: parseInt(query.get('tilecols') || '2', 10),
+    tileRows: parseInt(query.get('tilerows') || '3', 10),
     minConfidence: parseInt(query.get('conf') || '0', 10),
     maxSide: parseInt(query.get('side') || '2000', 10),
     minSide: parseInt(query.get('minside') || '1200', 10)
@@ -741,6 +748,88 @@
     if (leftEdge > gapNorm - 0.012) return false;
     if (rightEdge < gapNorm + 0.012) return false;
     return true;
+  }
+
+
+  /** 分块检测：整页字太小、倾斜、光照不均时，单次检测会把低分框全丢掉。
+   *  切成带重叠的小块分别检测，每块里的字相对更大、光照更均匀。 */
+  async function detectTiles(canvas) {
+    const engine = await ensurePaddle();
+    const cols = Math.max(1, CFG.tileCols);
+    const rows = Math.max(1, CFG.tileRows);
+    const overlap = 0.1;
+    const tw = canvas.width / cols;
+    const th = canvas.height / rows;
+    const padX = tw * overlap;
+    const padY = th * overlap;
+    const items = [];
+
+    for (let r = 0; r < rows; r++) {
+      for (let c = 0; c < cols; c++) {
+        const x0 = Math.max(0, Math.round(c * tw - padX));
+        const y0 = Math.max(0, Math.round(r * th - padY));
+        const x1 = Math.min(canvas.width, Math.round((c + 1) * tw + padX));
+        const y1 = Math.min(canvas.height, Math.round((r + 1) * th + padY));
+        const tile = document.createElement('canvas');
+        tile.width = x1 - x0;
+        tile.height = y1 - y0;
+        const tctx = tile.getContext('2d');
+        tctx.drawImage(canvas, x0, y0, tile.width, tile.height, 0, 0, tile.width, tile.height);
+        const data = tctx.getImageData(0, 0, tile.width, tile.height);
+        let result;
+        try {
+          result = await engine.detect({ data: data.data, width: tile.width, height: tile.height });
+        } catch (err) {
+          window.__tileErr = { r: r, c: c, w: tile.width, h: tile.height, msg: String(err && err.message || err) };
+          continue;
+        }
+        const rw = result.resizedImageWidth || tile.width;
+        const rh = result.resizedImageHeight || tile.height;
+        const sx = tile.width / rw;
+        const sy = tile.height / rh;
+
+        for (const line of result.texts || []) {
+          const text = (line.text || '').trim();
+          const box = line.box;
+          if (!text || !box || !box.length) continue;
+          let left = Infinity, top = Infinity, right = -Infinity, bottom = -Infinity;
+          for (const point of box) {
+            left = Math.min(left, point[0] * sx);
+            top = Math.min(top, point[1] * sy);
+            right = Math.max(right, point[0] * sx);
+            bottom = Math.max(bottom, point[1] * sy);
+          }
+          const item = {
+            id: 0,
+            text: text,
+            left: (x0 + left) / canvas.width,
+            right: (x0 + right) / canvas.width,
+            top: (y0 + top) / canvas.height,
+            bottom: (y0 + bottom) / canvas.height
+          };
+          item.midY = (item.top + item.bottom) / 2;
+          item.height = item.bottom - item.top;
+          item.width = item.right - item.left;
+          item.angle = 0;
+          items.push(item);
+        }
+      }
+    }
+
+    // 重叠区会检出两次：同一行（文本相同、纵向重叠、横向接近）只留一条
+    const kept = [];
+    for (const item of items) {
+      const dup = kept.some(function (other) {
+        if (other.text !== item.text) return false;
+        const dv = Math.abs(other.midY - item.midY);
+        const dh = Math.abs((other.left + other.right) / 2 - (item.left + item.right) / 2);
+        return dv < Math.max(other.height, item.height) * 0.6 && dh < 0.06;
+      });
+      if (!dup) kept.push(item);
+    }
+    kept.sort(function (a, b) { return a.top - b.top || a.left - b.left; });
+    kept.forEach(function (item, index) { item.id = index; });
+    return kept;
   }
 
   async function detectOn(sourceCanvas, offset, totalWidth) {
@@ -1131,7 +1220,7 @@
    *
    * 刻意不做二值化：实测 Otsu 会吃掉书页的细笔画，识别反而更差。
    */
-  function enhance(canvas) {
+  function enhance(canvas, mode) {
     const context = canvas.getContext('2d');
     const width = canvas.width;
     const height = canvas.height;
@@ -1161,7 +1250,8 @@
         const bgLum = Math.max(24, 0.299 * bg[j] + 0.587 * bg[j + 1] + 0.114 * bg[j + 2]);
         const lum = 0.299 * data[i] + 0.587 * data[i + 1] + 0.114 * data[i + 2];
         const v = Math.min(1, lum / bgLum);
-        const out = 255 * Math.pow(v, 2.2);
+        // gamma 模式压暗笔画，检测更容易、识别更容易糊；flat 只去光照，留给识别
+        const out = mode === 'flat' ? 255 * v : 255 * Math.pow(v, 2.2);
 
         data[i] = out;
         data[i + 1] = out;
@@ -1220,6 +1310,7 @@
     render();
 
     try {
+      window.__stage = 'decode';
       const bitmap = await createImageBitmap(file);
       const longSide = Math.max(bitmap.width, bitmap.height);
 
@@ -1242,14 +1333,58 @@
       let items;
 
       if (CFG.engine === 'paddle') {
+        window.__stage = 'ocr';
         const first = await ocrPaddlePage(upright);
+        window.__stage = 'ocr-done';
         items = first.items;
         upright = first.source;
+
+        // 整页一次过会漏掉「字小 + 歪 + 光照不均」的段落：低分框被阈值全丢掉。
+        // 分块让每块里的字相对更大，代价是慢 3~5 倍，所以只在第一遍明显偏少时才补。
+        if (CFG.tiles || keptWordCount(items) < CFG.tileWords) {
+          state.progressLabel = '这页字比较密，分块再认一次…';
+          renderProgress();
+          const tiled = await detectTiles(canvas);
+          window.__tiles = { whole: keptWordCount(items), tiled: keptWordCount(tiled) };
+          if (keptWordCount(tiled) > keptWordCount(items)) {
+            items = tiled;
+            upright = canvas;
+          }
+        }
 
         // 认出来的字太少，多半是页面太淡（背面透印、逆光、浅色底）把检测拖垮了。
         // 这种情况再用「去光照 + 伽马压暗」后的图走一遍完整识别（含摆正），谁的字母多就用谁。
         // 全量开增强会伤到正常页（实测 2240 从 63% 掉到 0%），所以只在必要时补这一刀。
-        if (!CFG.enhance && keptWordCount(items) < 40) {
+        // 多视角检测：这一页可能同时吃到「光照不均 + 倾斜」，单次检测会把低分框全丢掉。
+        // 用几组预处理各跑一遍，按「取到的词数」挑最好的那一份（词数相同就留先到的）。
+        if (CFG.multi) {
+          const candidates = [];
+          const flat = document.createElement('canvas');
+          flat.width = width;
+          flat.height = height;
+          flat.getContext('2d').drawImage(canvas, 0, 0);
+          enhance(flat, 'flat');
+          candidates.push(flat);
+          for (const angle of [3, -3]) {
+            candidates.push(rotateCanvas(flat, angle));
+            candidates.push(rotateCanvas(canvas, angle));
+          }
+          window.__multi = { first: keptWordCount(items) };
+          for (const candidate of candidates) {
+            state.progressLabel = '换个角度看这页…';
+            renderProgress();
+            const pass = await ocrPaddlePage(candidate);
+            const count = keptWordCount(pass.items);
+            window.__multi['v' + Object.keys(window.__multi).length] = count;
+            if (count > keptWordCount(items)) {
+              items = pass.items;
+              upright = pass.source;
+            }
+          }
+          window.__multi.best = keptWordCount(items);
+        }
+
+        if (CFG.enhance || keptWordCount(items) < CFG.minWords) {
           state.progressLabel = '页面偏淡，换个方式再认一次…';
           renderProgress();
 
@@ -1259,7 +1394,7 @@
           boosted.width = width;
           boosted.height = height;
           boosted.getContext('2d').drawImage(canvas, 0, 0);
-          enhance(boosted);
+          enhance(boosted, CFG.enhMode);
 
           const retry = await ocrPaddlePage(boosted);
           window.__retry = {
@@ -1363,6 +1498,7 @@
         addHistory(found, makeThumb(upright));
       }
     } catch (error) {
+      window.__err = { stage: window.__stage, msg: String(error && error.message || error), stack: String(error && error.stack || '').slice(0, 600) };
       state.message = '识别出错了：' + (error && error.message ? error.message : error);
     } finally {
       state.busy = false;
